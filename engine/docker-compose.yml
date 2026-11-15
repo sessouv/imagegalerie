@@ -1,0 +1,16 @@
+services:
+  engine:
+    build: .
+    restart: unless-stopped
+    environment:
+      ENGINE_DRIVER: ${ENGINE_DRIVER:-chatterbox}
+      ENGINE_TOKEN: ${ENGINE_TOKEN:?Définir ENGINE_TOKEN dans engine/.env}
+      ENGINE_THREADS: ${ENGINE_THREADS:-0}
+    ports:
+      # Accessible uniquement depuis le serveur lui-même
+      - "127.0.0.1:8100:8100"
+    volumes:
+      - models:/models
+
+volumes:
+  models:

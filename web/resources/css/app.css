@@ -1,0 +1,44 @@
+@import 'tailwindcss';
+
+@source '../js';
+
+@theme {
+    --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+    --color-ink: #17151f;
+    --color-paper: #f6f4f0;
+    --color-accent: #5b3df5;
+    --color-accent-dark: #4529d6;
+}
+
+body {
+    background: var(--color-paper);
+    color: var(--color-ink);
+}
+
+@layer components {
+    .btn,
+    .btn-primary,
+    .btn-ghost {
+        @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition
+            disabled:cursor-not-allowed disabled:opacity-50;
+    }
+    .btn-primary {
+        @apply bg-accent text-white hover:bg-accent-dark;
+    }
+    .btn-ghost {
+        @apply border border-black/10 bg-white hover:bg-black/5;
+    }
+    .field {
+        @apply w-full rounded-lg border border-black/15 bg-white px-3 py-2 text-sm outline-none
+            focus:border-accent focus:ring-2 focus:ring-accent/20;
+    }
+    .label {
+        @apply mb-1 block text-sm font-medium;
+    }
+    .card {
+        @apply rounded-2xl border border-black/10 bg-white;
+    }
+    .error {
+        @apply mt-1 text-sm text-red-600;
+    }
+}

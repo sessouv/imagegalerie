@@ -1,0 +1,113 @@
+import hmac
+import os
+import tempfile
+import time
+from contextlib import asynccontextmanager
+
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import Response
+
+from . import audio
+from .config import LANGUAGES, Settings
+from .drivers import SpeechParams, make_driver
+from .text import split_text
+
+settings = Settings()
+driver = make_driver(settings.driver, settings.device, settings.threads)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    if not settings.token:
+        raise RuntimeError("ENGINE_TOKEN doit être défini.")
+    await run_in_threadpool(driver.load)
+    yield
+
+
+app = FastAPI(title="Moteur vocal", lifespan=lifespan)
+
+
+def require_token(authorization: str = Header(default="")) -> None:
+    expected = f"Bearer {settings.token}"
+    if not hmac.compare_digest(authorization.encode(), expected.encode()):
+        raise HTTPException(status_code=401, detail="Jeton invalide.")
+
+
+@app.get("/health")
+def health():
+    return {
+        "status": "ok" if driver.loaded else "loading",
+        "driver": driver.name,
+        "languages": LANGUAGES,
+        "max_chars": settings.max_chars,
+    }
+
+
+@app.post("/v1/speech", dependencies=[Depends(require_token)])
+async def speech(
+    text: str = Form(...),
+    language: str = Form("fr"),
+    exaggeration: float = Form(0.5, ge=0.25, le=2.0),
+    cfg_weight: float = Form(0.5, ge=0.0, le=1.0),
+    temperature: float = Form(0.8, ge=0.05, le=2.0),
+    seed: int | None = Form(None),
+    format: str = Form("mp3"),
+    sample: UploadFile | None = File(None),
+):
+    text = text.strip()
+    if not text:
+        raise HTTPException(422, "Le texte est vide.")
+    if len(text) > settings.max_chars:
+        raise HTTPException(422, f"Texte trop long (maximum {settings.max_chars} caractères).")
+    if language not in LANGUAGES:
+        raise HTTPException(422, f"Langue non prise en charge : {language}.")
+    if format not in ("mp3", "wav"):
+        raise HTTPException(422, "Format inconnu (mp3 ou wav).")
+
+    params = SpeechParams(language, exaggeration, cfg_weight, temperature, seed)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        sample_path = None
+        if sample is not None:
+            raw = await sample.read(settings.max_sample_bytes + 1)
+            if len(raw) > settings.max_sample_bytes:
+                raise HTTPException(413, "Échantillon trop volumineux.")
+            src = os.path.join(tmp, "source")
+            sample_path = os.path.join(tmp, "sample.wav")
+            with open(src, "wb") as f:
+                f.write(raw)
+            try:
+                audio.normalize_sample(src, sample_path, 24000, settings.sample_seconds)
+            except audio.AudioError as e:
+                raise HTTPException(422, str(e))
+            if audio.wav_seconds(sample_path) < 3:
+                raise HTTPException(422, "Échantillon trop court (3 secondes minimum).")
+
+        started = time.monotonic()
+        samples = await run_in_threadpool(_render, text, params, sample_path)
+        elapsed = time.monotonic() - started
+
+    wav = audio.to_wav_bytes(samples, driver.sample_rate)
+    duration_ms = int(len(samples) / driver.sample_rate * 1000)
+    if format == "mp3":
+        body, media = await run_in_threadpool(audio.wav_to_mp3, wav), "audio/mpeg"
+    else:
+        body, media = wav, "audio/wav"
+
+    return Response(
+        content=body,
+        media_type=media,
+        headers={
+            "X-Audio-Duration-Ms": str(duration_ms),
+            "X-Render-Seconds": f"{elapsed:.2f}",
+        },
+    )
+
+
+def _render(text: str, params: SpeechParams, sample_path: str | None):
+    parts = [
+        driver.synthesize(chunk, params, sample_path)
+        for chunk in split_text(text, settings.chunk_chars)
+    ]
+    return audio.join(parts, driver.sample_rate)
