@@ -6,6 +6,10 @@ Outil interne de synthèse vocale et de clonage de voix (français et anglais), 
 - **Clonage de voix** : 10 à 20 secondes d'audio (fichier importé ou enregistrement au micro) suffisent pour créer une voix réutilisable.
 - **Longs textes** : le texte est découpé en passages générés un par un, avec progression, reprise après
   interruption, et régénération d'un seul passage (texte corrigeable) sans refaire le reste.
+- **Dictionnaire de prononciation** : noms propres, sigles et mots étrangers sont remplacés par leur écriture
+  phonétique au moment de la lecture, sans modifier le texte affiché.
+- **Voix soignées** : nettoyage automatique de l'échantillon (bruit de fond, silences, volume), l'original restant
+  disponible, et réglages favoris mémorisés pour chaque voix.
 - **Historique** partagé par l'équipe.
 
 ## Architecture

@@ -1,5 +1,5 @@
 <script setup>
-import { router } from '@inertiajs/vue3';
+import { Link, router } from '@inertiajs/vue3';
 import { onMounted, onUnmounted, ref, watch } from 'vue';
 import { api } from '../api';
 
@@ -58,7 +58,8 @@ async function regenerate(segment, text) {
 <template>
     <div class="mt-3 border-t border-black/10 pt-3">
         <p class="text-xs text-black/55">
-            Un passage mal prononcé ? Régénérez-le seul, ou corrigez son texte (par exemple en l'écrivant comme il se prononce).
+            Un passage mal prononcé ? Régénérez-le seul, ou corrigez son texte. Pour un mot qui revient souvent, ajoutez-le
+            plutôt au <Link href="/pronunciations" class="underline">dictionnaire de prononciation</Link>, puis régénérez le passage.
             L'audio complet est réassemblé ensuite.
         </p>
         <p v-if="error" class="error">{{ error }}</p>

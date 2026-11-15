@@ -23,6 +23,33 @@ def normalize_sample(src: str, dst: str, sample_rate: int, max_seconds: int) -> 
         raise AudioError("Échantillon audio illisible.")
 
 
+# Coupe les graves parasites, atténue le bruit de fond, ramène le volume à un
+# niveau constant, puis retire le silence du début et de la fin. Le volume est
+# égalisé avant la coupe : un enregistrement très faible n'est ainsi pas pris
+# pour du silence.
+_TRIM = "silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.15"
+CLEAN_FILTER = ",".join([
+    "highpass=f=70",
+    "afftdn=nf=-25",
+    "loudnorm=I=-20:TP=-2:LRA=11",
+    _TRIM, "areverse", _TRIM, "areverse",
+])
+
+
+def clean_sample(src: str, dst: str, sample_rate: int, max_seconds: int) -> None:
+    """Nettoie un échantillon de voix et le convertit en WAV mono."""
+    result = subprocess.run(
+        [
+            "ffmpeg", "-nostdin", "-y", "-loglevel", "error",
+            "-i", src, "-vn", "-ac", "1", "-af", CLEAN_FILTER, "-ar", str(sample_rate),
+            "-t", str(max_seconds), "-c:a", "pcm_s16le", dst,
+        ],
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        raise AudioError("Échantillon audio illisible.")
+
+
 def wav_seconds(path: str) -> float:
     with wave.open(path, "rb") as f:
         return f.getnframes() / float(f.getframerate())

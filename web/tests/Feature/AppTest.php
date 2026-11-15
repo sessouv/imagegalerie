@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Jobs\GenerateSpeech;
 use App\Models\Generation;
+use App\Models\Pronunciation;
 use App\Models\User;
 use App\Models\Voice;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -296,5 +297,107 @@ class AppTest extends TestCase
         Storage::assertMissing($voice->sample_path);
         $this->assertNull($generation->refresh()->voice_id);
         $this->assertSame('Camille', $generation->voice_name);
+    }
+
+    public function test_dictionary_changes_what_is_spoken_but_not_the_text(): void
+    {
+        $this->fakeEngine();
+        $user = User::factory()->create();
+        $post = fn (array $entry) => $this->actingAs($user)->post('/pronunciations', $entry);
+
+        $post(['term' => 'Qiryna', 'replacement' => 'Kirina'])->assertSessionHasNoErrors();
+        $post(['term' => 'Web', 'replacement' => 'ouèbe'])->assertSessionHasNoErrors();
+        $post(['term' => 'Le Web Artisan', 'replacement' => 'le ouèbe artisan'])->assertSessionHasNoErrors();
+        $post(['term' => 'SEO', 'replacement' => 'S E O', 'case_sensitive' => true])->assertSessionHasNoErrors();
+        $post(['term' => 'live', 'replacement' => 'laïve', 'language' => 'fr'])->assertSessionHasNoErrors();
+        $post(['term' => 'live', 'replacement' => 'liv', 'language' => 'en'])->assertSessionHasNoErrors();
+        $post(['term' => 'qiryna', 'replacement' => 'x'])->assertSessionHasErrors('term');
+        $post(['term' => '', 'replacement' => ''])->assertSessionHasErrors(['term', 'replacement']);
+
+        $text = 'QIRYNA et Le Web Artisan : le SEO, pas le seo, en live sur le webinaire.';
+        $this->actingAs($user)->post('/generations', ['text' => $text] + $this->payload);
+
+        $this->assertSame($text, Generation::sole()->segments->sole()->text);
+        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/v1/speech')
+            && str_contains($r->body(), 'Kirina et le ouèbe artisan : le S E O, pas le seo, en laïve sur le webinaire.'));
+    }
+
+    public function test_dictionary_entries_can_be_updated_and_deleted(): void
+    {
+        $user = User::factory()->create();
+        $this->actingAs($user)->post('/pronunciations', ['term' => 'API', 'replacement' => 'a p i']);
+        $entry = Pronunciation::sole();
+
+        $this->get('/pronunciations')->assertOk();
+        $this->put("/pronunciations/{$entry->id}", ['term' => 'API', 'replacement' => 'A.P.I.', 'language' => 'fr'])->assertSessionHasNoErrors();
+        $this->assertSame(['A.P.I.', 'fr'], [$entry->refresh()->replacement, $entry->language]);
+        $this->delete("/pronunciations/{$entry->id}");
+        $this->assertModelMissing($entry);
+    }
+
+    public function test_voice_sample_is_cleaned_on_creation_and_used_for_generation(): void
+    {
+        $this->fakeEngine();
+        Http::fake(['engine.test/v1/samples/clean' => Http::response('CLEANWAV')]);
+        $user = User::factory()->create();
+
+        $this->actingAs($user)->post('/voices', ['name' => 'Camille', 'language' => 'fr', 'consent' => true, 'clean' => true, 'sample' => $this->wav()])
+            ->assertSessionHasNoErrors();
+
+        $voice = Voice::sole();
+        $this->assertTrue($voice->usesCleaned());
+        $this->assertSame('CLEANWAV', Storage::get($voice->cleaned_path));
+        Storage::assertExists($voice->sample_path);
+        $this->assertSame('CLEANWAV', $this->get("/voices/{$voice->id}/sample")->assertOk()->getFile()->getContent());
+        $this->assertNotSame('CLEANWAV', $this->get("/voices/{$voice->id}/sample?version=original")->getFile()->getContent());
+
+        $this->post('/generations', ['text' => 'Bonjour.', 'voice_id' => $voice->id] + $this->payload);
+        Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/v1/speech') && str_contains($r->body(), 'CLEANWAV'));
+
+        // Retour à l'échantillon d'origine, puis de nouveau au nettoyé sans rappeler le moteur
+        $this->put("/voices/{$voice->id}/cleaning", ['enabled' => false])->assertSessionHasNoErrors();
+        $this->assertFalse($voice->refresh()->usesCleaned());
+        $this->put("/voices/{$voice->id}/cleaning", ['enabled' => true]);
+        $this->assertTrue($voice->refresh()->usesCleaned());
+        $this->assertCount(1, Http::recorded(fn (Request $r) => str_ends_with($r->url(), '/v1/samples/clean')));
+
+        $this->delete("/voices/{$voice->id}");
+        $this->assertSame([], Storage::allFiles('voices'));
+    }
+
+    public function test_cleaning_failure_creates_nothing_and_existing_voice_can_be_cleaned_later(): void
+    {
+        Http::fake(['engine.test/v1/samples/clean' => Http::sequence()
+            ->push(['detail' => 'Il reste moins de 3 secondes de voix une fois les silences retirés.'], 422)
+            ->push('CLEANWAV')]);
+        $user = User::factory()->create();
+        $form = ['name' => 'Camille', 'language' => 'fr', 'consent' => true, 'sample' => $this->wav()];
+
+        $this->actingAs($user)->post('/voices', $form + ['clean' => true])->assertSessionHasErrors('sample');
+        $this->assertSame(0, Voice::count());
+        $this->assertSame([], Storage::allFiles('voices'));
+
+        $this->post('/voices', ['sample' => $this->wav()] + $form)->assertSessionHasNoErrors();
+        $voice = Voice::sole();
+        $this->assertFalse($voice->usesCleaned());
+
+        $this->put("/voices/{$voice->id}/cleaning", ['enabled' => true])->assertSessionHasNoErrors();
+        $this->assertTrue($voice->refresh()->usesCleaned());
+    }
+
+    public function test_favourite_settings_can_be_saved_and_cleared_for_a_voice(): void
+    {
+        $voice = Voice::factory()->create();
+        $url = "/voices/{$voice->id}/settings";
+
+        $this->actingAs($voice->user)->put($url, ['settings' => ['exaggeration' => 9, 'cfg_weight' => 0.3, 'temperature' => 0.7]])
+            ->assertSessionHasErrors('settings.exaggeration');
+        $this->put($url, ['settings' => ['exaggeration' => 0.7]])->assertSessionHasErrors('settings.cfg_weight');
+
+        $this->put($url, ['settings' => ['exaggeration' => '0.7', 'cfg_weight' => 0.3, 'temperature' => 0.7, 'seed' => 4]])->assertSessionHasNoErrors();
+        $this->assertSame(['exaggeration' => 0.7, 'cfg_weight' => 0.3, 'temperature' => 0.7], $voice->refresh()->settings);
+
+        $this->put($url, ['settings' => null])->assertSessionHasNoErrors();
+        $this->assertNull($voice->refresh()->settings);
     }
 }

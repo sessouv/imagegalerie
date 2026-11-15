@@ -47,6 +47,31 @@ class VoiceEngine
         ];
     }
 
+    /**
+     * Nettoie un échantillon de voix (bruit de fond, silences, volume).
+     *
+     * @return string Échantillon nettoyé, au format WAV
+     */
+    public function cleanSample(string $contents, string $filename): string
+    {
+        try {
+            $response = Http::withToken((string) config('voice.engine_token'))
+                ->timeout(120)
+                ->connectTimeout(10)
+                ->attach('sample', $contents, $filename)
+                ->post(config('voice.engine_url').'/v1/samples/clean');
+        } catch (ConnectionException) {
+            throw new RuntimeException('Le moteur vocal est injoignable : démarrez-le, ou décochez le nettoyage.');
+        }
+
+        if ($response->failed()) {
+            $detail = $response->json('detail');
+            throw new RuntimeException(is_string($detail) ? $detail : 'Le nettoyage de l\'échantillon a échoué ('.$response->status().').');
+        }
+
+        return $response->body();
+    }
+
     /** Convertit un fichier WAV en MP3, sans charger l'audio en mémoire. */
     public function encodeMp3(string $wavPath, string $mp3Path): void
     {

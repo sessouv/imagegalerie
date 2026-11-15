@@ -107,6 +107,30 @@ async def speech(
     )
 
 
+@app.post("/v1/samples/clean", dependencies=[Depends(require_token)])
+async def clean_sample(sample: UploadFile = File(...)):
+    """Nettoie un échantillon de voix : bruit de fond, silences, volume."""
+    raw = await sample.read(settings.max_sample_bytes + 1)
+    if len(raw) > settings.max_sample_bytes:
+        raise HTTPException(413, "Échantillon trop volumineux.")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        src, dst = os.path.join(tmp, "source"), os.path.join(tmp, "clean.wav")
+        with open(src, "wb") as f:
+            f.write(raw)
+        try:
+            await run_in_threadpool(audio.clean_sample, src, dst, 24000, settings.sample_seconds)
+        except audio.AudioError as e:
+            raise HTTPException(422, str(e))
+        seconds = audio.wav_seconds(dst)
+        if seconds < 3:
+            raise HTTPException(422, "Il reste moins de 3 secondes de voix une fois les silences retirés.")
+        with open(dst, "rb") as f:
+            body = f.read()
+
+    return Response(content=body, media_type="audio/wav", headers={"X-Audio-Duration-Ms": str(int(seconds * 1000))})
+
+
 @app.post("/v1/encode", dependencies=[Depends(require_token)])
 async def encode(audio_file: UploadFile = File(...)):
     """Convertit un fichier audio (l'assemblage des passages) en MP3."""

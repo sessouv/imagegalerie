@@ -5,7 +5,7 @@ import { dateTime } from '../format';
 
 const props = defineProps({ voices: Array, languages: Object, maxSampleMb: Number });
 
-const form = useForm({ name: '', description: '', language: 'fr', sample: null, consent: false });
+const form = useForm({ name: '', description: '', language: 'fr', sample: null, consent: false, clean: true });
 
 const fileInput = ref(null);
 const previewUrl = ref(null);
@@ -90,6 +90,21 @@ const submit = () => form.post('/voices', {
     },
 });
 
+const busy = ref(null);
+
+const setCleaning = (voice, enabled) => {
+    busy.value = voice.id;
+    router.put(`/voices/${voice.id}/cleaning`, { enabled }, {
+        preserveScroll: true,
+        onError: (errors) => alert(errors.sample ?? 'Le nettoyage a échoué.'),
+        onFinish: () => { busy.value = null; },
+    });
+};
+
+const clearSettings = (voice) => router.put(`/voices/${voice.id}/settings`, { settings: null }, { preserveScroll: true });
+
+const number = (value) => Number(value).toLocaleString('fr-FR', { maximumFractionDigits: 2 });
+
 const remove = (voice) => {
     if (confirm(`Supprimer la voix « ${voice.name} » ? Les audios déjà générés sont conservés.`)) {
         router.delete(`/voices/${voice.id}`, { preserveScroll: true });
@@ -153,6 +168,14 @@ const remove = (voice) => {
             </div>
 
             <label class="flex items-start gap-2 text-sm">
+                <input v-model="form.clean" type="checkbox" class="mt-0.5 accent-accent" />
+                <span>
+                    Nettoyer l'échantillon automatiquement
+                    <span class="block text-xs text-black/55">Atténue le bruit de fond, retire les silences du début et de la fin, égalise le volume. L'original est conservé.</span>
+                </span>
+            </label>
+
+            <label class="flex items-start gap-2 text-sm">
                 <input v-model="form.consent" type="checkbox" class="mt-0.5 accent-accent" />
                 <span>Je confirme qu'il s'agit de ma voix, ou que la personne enregistrée m'a donné son accord pour la cloner.</span>
             </label>
@@ -179,7 +202,22 @@ const remove = (voice) => {
                         <button class="text-xs text-red-600/80 underline hover:text-red-700" @click="remove(voice)">Supprimer</button>
                     </div>
                     <p v-if="voice.description" class="mt-2 text-sm text-black/70">{{ voice.description }}</p>
-                    <audio :src="voice.sample_url" controls preload="none" class="mt-3 h-10 w-full"></audio>
+                    <audio :key="voice.sample_url" :src="voice.sample_url" controls preload="none" class="mt-3 h-10 w-full"></audio>
+
+                    <div class="mt-3 space-y-1 text-xs text-black/60">
+                        <p>
+                            Échantillon utilisé : <strong class="font-medium text-black/80">{{ voice.cleaned ? 'version nettoyée' : 'original' }}</strong>
+                            <button class="ml-2 text-accent underline disabled:opacity-50" :disabled="busy === voice.id" @click="setCleaning(voice, !voice.cleaned)">
+                                {{ busy === voice.id ? 'Nettoyage…' : voice.cleaned ? 'Revenir à l\'original' : 'Utiliser la version nettoyée' }}
+                            </button>
+                        </p>
+                        <p v-if="voice.settings">
+                            Réglages favoris : expressivité {{ number(voice.settings.exaggeration) }}, rythme {{ number(voice.settings.cfg_weight) }},
+                            variabilité {{ number(voice.settings.temperature) }}
+                            <button class="ml-2 text-accent underline" @click="clearSettings(voice)">Effacer</button>
+                        </p>
+                        <p v-else>Aucun réglage favori : enregistrez-en depuis l'écran de synthèse.</p>
+                    </div>
                 </article>
             </div>
         </section>

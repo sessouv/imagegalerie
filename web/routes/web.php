@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\GenerationController;
 use App\Http\Controllers\LoginController;
+use App\Http\Controllers\PronunciationController;
 use App\Http\Controllers\StudioController;
 use App\Http\Controllers\VoiceController;
 use Illuminate\Support\Facades\Route;
@@ -31,4 +32,11 @@ Route::middleware('auth')->group(function () {
     Route::post('/voices', [VoiceController::class, 'store'])->name('voices.store');
     Route::get('/voices/{voice}/sample', [VoiceController::class, 'sample'])->name('voices.sample');
     Route::delete('/voices/{voice}', [VoiceController::class, 'destroy'])->name('voices.destroy');
+    Route::put('/voices/{voice}/cleaning', [VoiceController::class, 'cleaning'])->name('voices.cleaning');
+    Route::put('/voices/{voice}/settings', [VoiceController::class, 'settings'])->name('voices.settings');
+
+    Route::get('/pronunciations', [PronunciationController::class, 'index'])->name('pronunciations.index');
+    Route::post('/pronunciations', [PronunciationController::class, 'store'])->name('pronunciations.store');
+    Route::put('/pronunciations/{pronunciation}', [PronunciationController::class, 'update'])->name('pronunciations.update');
+    Route::delete('/pronunciations/{pronunciation}', [PronunciationController::class, 'destroy'])->name('pronunciations.destroy');
 });

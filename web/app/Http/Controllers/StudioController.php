@@ -13,7 +13,7 @@ class StudioController extends Controller
     public function __invoke(VoiceEngine $engine): Response
     {
         return Inertia::render('Studio', [
-            'voices' => fn () => Voice::orderBy('name')->get(['id', 'name', 'language']),
+            'voices' => fn () => Voice::orderBy('name')->get(['id', 'name', 'language', 'settings']),
             'languages' => config('voice.languages'),
             'maxChars' => config('voice.max_chars'),
             'generations' => fn () => Generation::withProgress()->latest('id')->limit(8)->get()

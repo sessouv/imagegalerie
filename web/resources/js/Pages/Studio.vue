@@ -1,6 +1,6 @@
 <script setup>
 import { Head, Link, router, useForm } from '@inertiajs/vue3';
-import { onMounted, ref, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import GenerationItem from '../Components/GenerationItem.vue';
 import { useGenerationPolling } from '../polling';
 
@@ -27,16 +27,32 @@ const showAdvanced = ref(false);
 // La langue suit celle de la voix choisie
 watch(() => form.voice_id, (id) => {
     const voice = props.voices.find((v) => v.id === id);
-    if (voice) form.language = voice.language;
+    if (!voice) return;
+    form.language = voice.language;
+    // Les réglages favoris de la voix remplacent les réglages en cours
+    if (voice.settings && !reusing) Object.assign(form, voice.settings);
+}, { flush: 'sync' });
+
+const selectedVoice = computed(() => props.voices.find((v) => v.id === form.voice_id));
+const currentSettings = () => ({ exaggeration: form.exaggeration, cfg_weight: form.cfg_weight, temperature: form.temperature });
+const settingsSaved = computed(() => {
+    const saved = selectedVoice.value?.settings;
+    return !!saved && Object.entries(currentSettings()).every(([key, value]) => Number(saved[key]) === Number(value));
 });
+const saveSettings = () => router.put(`/voices/${form.voice_id}/settings`, { settings: currentSettings() }, { preserveScroll: true, preserveState: true });
 
 const submit = () => form.post('/generations', { preserveScroll: true, preserveState: true });
 
+// Réutiliser un audio reprend ses propres réglages, pas les favoris de la voix
+let reusing = false;
+
 const reuse = (generation) => {
+    reusing = true;
     form.text = generation.text;
     form.language = generation.language;
     form.voice_id = props.voices.some((v) => v.id === generation.voice_id) ? generation.voice_id : null;
     Object.assign(form, generation.settings);
+    reusing = false;
     window.scrollTo({ top: 0, behavior: 'smooth' });
 };
 
@@ -131,6 +147,13 @@ onMounted(() => {
                     <input id="seed" v-model.number="form.seed" type="number" min="0" class="field" placeholder="Aléatoire" />
                     <p class="text-xs text-black/50">Un même nombre redonne le même rendu pour un même texte.</p>
                 </div>
+            </div>
+
+            <div v-if="selectedVoice" class="border-t border-black/10 pt-4 text-xs">
+                <span v-if="settingsSaved" class="text-black/55">Ces réglages sont les favoris de « {{ selectedVoice.name }} ».</span>
+                <button v-else type="button" class="text-accent underline" @click="saveSettings">
+                    Enregistrer ces réglages comme favoris de « {{ selectedVoice.name }} »
+                </button>
             </div>
         </div>
     </form>

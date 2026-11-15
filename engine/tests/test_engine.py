@@ -92,3 +92,54 @@ def test_encode_turns_wav_into_mp3():
         assert r.status_code == 200 and r.headers["content-type"] == "audio/mpeg" and len(r.content) > 100
         r = client.post("/v1/encode", files={"audio_file": ("a.wav", b"rien", "audio/wav")}, headers=AUTH)
         assert r.status_code == 422
+
+
+def _voice_like(lead: float, body: float, tail: float, gain: float) -> bytes:
+    """Silence, puis un signal faible et bruité, puis silence."""
+    rate = 16000
+    rng = np.random.default_rng(1)
+    t = np.arange(int(rate * body)) / rate
+    signal = gain * np.sin(2 * np.pi * 180 * t) * (0.6 + 0.4 * np.sin(2 * np.pi * 3 * t))
+    signal += 0.002 * rng.standard_normal(len(t))
+    samples = np.concatenate([np.zeros(int(rate * lead)), signal, np.zeros(int(rate * tail))])
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as f:
+        f.setnchannels(1)
+        f.setsampwidth(2)
+        f.setframerate(rate)
+        f.writeframes((samples * 32767).astype("<i2").tobytes())
+    return buf.getvalue()
+
+
+def test_clean_sample_trims_silence_and_raises_volume():
+    with TestClient(app) as client:
+        source = _voice_like(lead=2, body=6, tail=3, gain=0.03)
+        r = client.post("/v1/samples/clean", files={"sample": ("v.wav", source, "audio/wav")}, headers=AUTH)
+        assert r.status_code == 200 and r.headers["content-type"] == "audio/wav"
+        with wave.open(io.BytesIO(r.content)) as f:
+            assert f.getframerate() == 24000 and f.getnchannels() == 1
+            seconds = f.getnframes() / f.getframerate()
+            pcm = np.frombuffer(f.readframes(f.getnframes()), dtype="<i2") / 32767
+        # 11 s en entrée dont 5 s de silence au début et à la fin
+        assert 5.5 < seconds < 6.8
+        assert abs(int(r.headers["x-audio-duration-ms"]) / 1000 - seconds) < 0.01
+        # Le volume moyen est nettement relevé (0,03 d'amplitude au départ)
+        assert np.sqrt(np.mean(pcm**2)) > 0.05
+
+
+def test_clean_sample_keeps_a_very_quiet_recording():
+    with TestClient(app) as client:
+        source = _voice_like(lead=2, body=6, tail=2, gain=0.004)
+        r = client.post("/v1/samples/clean", files={"sample": ("v.wav", source, "audio/wav")}, headers=AUTH)
+        assert r.status_code == 200
+        assert 5.5 < int(r.headers["x-audio-duration-ms"]) / 1000 < 7.5
+
+
+def test_clean_sample_rejects_bad_input():
+    with TestClient(app) as client:
+        post = lambda body: client.post(  # noqa: E731
+            "/v1/samples/clean", files={"sample": ("v.wav", body, "audio/wav")}, headers=AUTH
+        ).status_code
+        assert client.post("/v1/samples/clean", files={"sample": ("v.wav", _wav(5), "audio/wav")}).status_code == 401
+        assert post(b"pas de l'audio") == 422
+        assert post(_voice_like(lead=4, body=1.5, tail=4, gain=0.3)) == 422

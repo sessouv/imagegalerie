@@ -9,6 +9,7 @@ const flash = computed(() => page.props.flash?.success);
 const links = [
     { href: '/', label: 'Synthèse vocale' },
     { href: '/voices', label: 'Voix' },
+    { href: '/pronunciations', label: 'Prononciation' },
     { href: '/generations', label: 'Historique' },
 ];
 

@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Models\Generation;
 use App\Models\GenerationSegment;
+use App\Services\PronunciationDictionary;
 use App\Services\VoiceEngine;
 use App\Services\WavJoiner;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -30,7 +31,7 @@ class GenerateSpeech implements ShouldQueue
 
     public function __construct(public Generation $generation) {}
 
-    public function handle(VoiceEngine $engine, WavJoiner $joiner): void
+    public function handle(VoiceEngine $engine, WavJoiner $joiner, PronunciationDictionary $dictionary): void
     {
         $generation = $this->generation;
         if (! $generation->isRunning()) {
@@ -42,7 +43,7 @@ class GenerateSpeech implements ShouldQueue
         try {
             if ($segment) {
                 $generation->update(['status' => Generation::PROCESSING]);
-                $this->render($segment, $engine);
+                $this->render($segment, $engine, $dictionary);
             } else {
                 $this->assemble($engine, $joiner);
             }
@@ -82,14 +83,15 @@ class GenerateSpeech implements ShouldQueue
         return $this->generation->segments()->where('status', '!=', Generation::COMPLETED)->first();
     }
 
-    private function render(GenerationSegment $segment, VoiceEngine $engine): void
+    private function render(GenerationSegment $segment, VoiceEngine $engine, PronunciationDictionary $dictionary): void
     {
         $generation = $this->generation;
         $segment->update(['status' => Generation::PROCESSING, 'error' => null]);
 
         $sample = null;
         if ($voice = $generation->voice) {
-            $sample = ['contents' => Storage::get($voice->sample_path), 'filename' => basename($voice->sample_path)];
+            $path = $voice->activeSamplePath();
+            $sample = ['contents' => Storage::get($path), 'filename' => basename($path)];
         }
 
         // Avec une graine fixe, chaque nouvel essai d'un passage doit tout de même varier
@@ -98,7 +100,8 @@ class GenerateSpeech implements ShouldQueue
             $settings['seed'] = ($settings['seed'] + $segment->attempts) % 2147483647;
         }
 
-        $result = $engine->speech($segment->text, $generation->language, $settings, $sample);
+        $spoken = $dictionary->apply($segment->text, $generation->language);
+        $result = $engine->speech($spoken, $generation->language, $settings, $sample);
 
         $path = $generation->directory().'/passage-'.$segment->id.'-'.Str::random(8).'.wav';
         Storage::put($path, $result['audio']);
