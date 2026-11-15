@@ -20,6 +20,12 @@ Route::middleware('auth')->group(function () {
     Route::post('/generations', [GenerationController::class, 'store'])->name('generations.store');
     Route::get('/generations/{generation}/audio', [GenerationController::class, 'audio'])->name('generations.audio');
     Route::delete('/generations/{generation}', [GenerationController::class, 'destroy'])->name('generations.destroy');
+    Route::post('/generations/{generation}/retry', [GenerationController::class, 'retry'])->name('generations.retry');
+    Route::get('/generations/{generation}/segments', [GenerationController::class, 'segments'])->name('generations.segments');
+    Route::scopeBindings()->group(function () {
+        Route::get('/generations/{generation}/segments/{segment}/audio', [GenerationController::class, 'segmentAudio'])->name('generations.segments.audio');
+        Route::post('/generations/{generation}/segments/{segment}/regenerate', [GenerationController::class, 'regenerateSegment'])->name('generations.segments.regenerate');
+    });
 
     Route::get('/voices', [VoiceController::class, 'index'])->name('voices.index');
     Route::post('/voices', [VoiceController::class, 'store'])->name('voices.store');

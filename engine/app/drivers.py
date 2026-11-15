@@ -1,7 +1,9 @@
 """Pilotes de synthèse. Chaque pilote transforme un segment de texte en signal mono."""
 
 import hashlib
+import os
 import threading
+import time
 from dataclasses import dataclass
 
 import numpy as np
@@ -41,6 +43,8 @@ class FakeDriver(Driver):
         pass
 
     def synthesize(self, text: str, params: SpeechParams, sample_path: str | None) -> np.ndarray:
+        # ENGINE_FAKE_DELAY simule la lenteur d'un vrai modèle (secondes par passage)
+        time.sleep(float(os.environ.get("ENGINE_FAKE_DELAY", "0")))
         seconds = max(0.3, min(len(text) * 0.06, 20.0))
         t = np.arange(int(self.sample_rate * seconds)) / self.sample_rate
         # La hauteur dépend de la voix, pour distinguer les rendus à l'oreille

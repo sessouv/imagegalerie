@@ -1,8 +1,11 @@
 <script setup>
 import { Head, Link, router } from '@inertiajs/vue3';
 import GenerationItem from '../Components/GenerationItem.vue';
+import { useGenerationPolling } from '../polling';
 
-defineProps({ generations: Object });
+const props = defineProps({ generations: Object });
+
+useGenerationPolling(() => props.generations.data);
 
 const reuse = (generation) => {
     sessionStorage.setItem('timbre:draft', JSON.stringify(generation));

@@ -1,7 +1,8 @@
 <script setup>
 import { Head, Link, router, useForm } from '@inertiajs/vue3';
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { onMounted, ref, watch } from 'vue';
 import GenerationItem from '../Components/GenerationItem.vue';
+import { useGenerationPolling } from '../polling';
 
 const props = defineProps({
     voices: Array,
@@ -39,16 +40,7 @@ const reuse = (generation) => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
 };
 
-// Rafraîchit la liste tant qu'un audio est en cours de génération
-const busy = computed(() => props.generations.some((g) => ['pending', 'processing'].includes(g.status)));
-let timer = null;
-watch(busy, (value) => {
-    clearInterval(timer);
-    if (value) {
-        timer = setInterval(() => router.reload({ only: ['generations'] }), 3000);
-    }
-}, { immediate: true });
-onUnmounted(() => clearInterval(timer));
+useGenerationPolling(() => props.generations);
 
 onMounted(() => {
     const draft = sessionStorage.getItem('timbre:draft');
@@ -63,7 +55,7 @@ onMounted(() => {
     <Head title="Synthèse vocale" />
 
     <h1 class="text-2xl font-semibold tracking-tight">Synthèse vocale</h1>
-    <p class="mt-1 text-sm text-black/60">Saisissez un texte, choisissez une voix, écoutez le résultat.</p>
+    <p class="mt-1 text-sm text-black/60">Saisissez un texte, choisissez une voix, écoutez le résultat. Les longs textes sont générés passage par passage.</p>
 
     <div v-if="engine.status !== 'ok'" class="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900">
         <template v-if="engine.status === 'loading'">Le moteur vocal charge son modèle : les générations démarreront dès qu'il sera prêt.</template>
@@ -85,7 +77,7 @@ onMounted(() => {
                 placeholder="Écrivez ou collez ici le texte à transformer en voix…"
             ></textarea>
             <div class="mt-3 flex items-center justify-between border-t border-black/10 pt-3">
-                <span class="text-xs text-black/50">{{ form.text.length }} / {{ maxChars }} caractères</span>
+                <span class="text-xs text-black/50">{{ form.text.length.toLocaleString('fr-FR') }} / {{ maxChars.toLocaleString('fr-FR') }} caractères</span>
                 <button class="btn-primary" :disabled="form.processing || !form.text.trim()">Générer la voix</button>
             </div>
             <p v-if="form.errors.text" class="error">{{ form.errors.text }}</p>

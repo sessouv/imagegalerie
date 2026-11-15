@@ -53,6 +53,19 @@ def wav_to_mp3(wav: bytes) -> bytes:
     return result.stdout
 
 
+def file_to_mp3(src: str, dst: str) -> None:
+    """Encode un fichier audio en MP3, sans le charger en mémoire."""
+    result = subprocess.run(
+        [
+            "ffmpeg", "-nostdin", "-y", "-loglevel", "error", "-i", src,
+            "-vn", "-c:a", "libmp3lame", "-b:a", "128k", "-f", "mp3", dst,
+        ],
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        raise AudioError("Fichier audio illisible.")
+
+
 def join(parts: list[np.ndarray], sample_rate: int, gap_seconds: float = 0.25) -> np.ndarray:
     if not parts:
         return np.zeros(0, dtype=np.float32)

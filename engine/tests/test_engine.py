@@ -83,3 +83,12 @@ def test_speech_rejects_bad_input():
         assert post(data={"text": "Bonjour", "exaggeration": "9"}) == 422
         assert post(data={"text": "Bonjour"}, files={"sample": ("v.wav", _wav(1), "audio/wav")}) == 422
         assert post(data={"text": "Bonjour"}, files={"sample": ("v.wav", b"pas de l'audio", "audio/wav")}) == 422
+
+
+def test_encode_turns_wav_into_mp3():
+    with TestClient(app) as client:
+        assert client.post("/v1/encode", files={"audio_file": ("a.wav", _wav(2), "audio/wav")}).status_code == 401
+        r = client.post("/v1/encode", files={"audio_file": ("a.wav", _wav(2), "audio/wav")}, headers=AUTH)
+        assert r.status_code == 200 and r.headers["content-type"] == "audio/mpeg" and len(r.content) > 100
+        r = client.post("/v1/encode", files={"audio_file": ("a.wav", b"rien", "audio/wav")}, headers=AUTH)
+        assert r.status_code == 422

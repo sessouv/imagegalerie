@@ -1,12 +1,14 @@
 import hmac
 import os
+import shutil
 import tempfile
 import time
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
+from starlette.background import BackgroundTask
 
 from . import audio
 from .config import LANGUAGES, Settings
@@ -103,6 +105,26 @@ async def speech(
             "X-Render-Seconds": f"{elapsed:.2f}",
         },
     )
+
+
+@app.post("/v1/encode", dependencies=[Depends(require_token)])
+async def encode(audio_file: UploadFile = File(...)):
+    """Convertit un fichier audio (l'assemblage des passages) en MP3."""
+    tmp = tempfile.mkdtemp()
+    cleanup = BackgroundTask(shutil.rmtree, tmp, ignore_errors=True)
+    src, dst = os.path.join(tmp, "source"), os.path.join(tmp, "audio.mp3")
+    try:
+        with open(src, "wb") as f:
+            while chunk := await audio_file.read(1024 * 1024):
+                f.write(chunk)
+        await run_in_threadpool(audio.file_to_mp3, src, dst)
+    except audio.AudioError as e:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise HTTPException(422, str(e))
+    except BaseException:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
+    return FileResponse(dst, media_type="audio/mpeg", background=cleanup)
 
 
 def _render(text: str, params: SpeechParams, sample_path: str | None):

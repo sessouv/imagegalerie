@@ -4,6 +4,8 @@ Outil interne de synthèse vocale et de clonage de voix (français et anglais), 
 
 - **Synthèse vocale** : un texte, une voix, des réglages d'expressivité, un MP3 à écouter et télécharger.
 - **Clonage de voix** : 10 à 20 secondes d'audio (fichier importé ou enregistrement au micro) suffisent pour créer une voix réutilisable.
+- **Longs textes** : le texte est découpé en passages générés un par un, avec progression, reprise après
+  interruption, et régénération d'un seul passage (texte corrigeable) sans refaire le reste.
 - **Historique** partagé par l'équipe.
 
 ## Architecture
@@ -18,7 +20,8 @@ L'application Laravel place chaque demande dans une file d'attente ; un worker a
 donnée : il peut être déplacé sur une autre machine (par exemple un serveur GPU) en changeant
 seulement `VOICE_ENGINE_URL`.
 
-Les textes longs sont découpés en phrases par le moteur, puis les segments sont assemblés.
+Chaque texte est découpé en passages de 280 caractères au plus. Le worker traite une étape à la fois
+(un passage, puis l'assemblage final en MP3) : un arrêt ne fait perdre que le passage en cours.
 Chatterbox appose sur chaque audio un filigrane inaudible (PerTh) qui permet d'identifier un contenu généré.
 
 ## Développement local
@@ -44,6 +47,18 @@ npm run dev            # terminal 1
 php artisan serve      # terminal 2
 php artisan queue:work # terminal 3
 ```
+
+### Windows (Laragon)
+
+Une fois le moteur installé dans `engine\.venv` et `web\.env` rempli, double-cliquer sur `demarrer.bat` :
+il reprend les générations interrompues, ouvre trois fenêtres (moteur, site, file d'attente) puis le
+navigateur. Fermer ces fenêtres arrête tout.
+
+Après une mise à jour du code : `composer install`, `php artisan migrate`, `npm install && npm run build`
+dans `web/`, puis relancer `demarrer.bat`.
+
+Si le worker a été arrêté en pleine génération, `php artisan generations:resume` (à lancer worker arrêté)
+la remet en file ; sinon elle reprend seule au bout d'une dizaine de minutes.
 
 Tests : `cd engine && pytest` et `cd web && php artisan test`.
 
@@ -73,8 +88,8 @@ compter nettement plus que la durée de l'audio produit. Le port n'est ouvert qu
    `VOICE_ENGINE_URL=http://127.0.0.1:8100`, `VOICE_ENGINE_TOKEN` identique à `ENGINE_TOKEN`.
 4. `php artisan key:generate`, `php artisan migrate --force`, `php artisan user:create …`.
 5. Worker de file d'attente : tâche planifiée Plesk, chaque minute :
-   `php artisan queue:work --stop-when-empty --max-time=3300 --timeout=960`
-   (ou un service systemd / Supervisor exécutant `php artisan queue:work --timeout=960`).
+   `php artisan queue:work --stop-when-empty --max-time=3300`
+   (ou un service systemd / Supervisor exécutant `php artisan queue:work`).
 6. Limites d'envoi PHP (`upload_max_filesize`, `post_max_size`) à 25 Mo ou plus pour les échantillons.
 
 ## Usage responsable
