@@ -21,11 +21,19 @@ const remove = () => {
     }
 };
 
+const rename = () => {
+    const title = prompt('Nom de l\'audio (il sert aussi de nom au fichier téléchargé) :', props.generation.title ?? '');
+    if (title !== null) {
+        router.patch(`/generations/${props.generation.id}`, { title }, { preserveScroll: true });
+    }
+};
+
 const retry = () => router.post(`/generations/${props.generation.id}/retry`, {}, { preserveScroll: true });
 </script>
 
 <template>
     <article class="card p-4">
+        <h3 v-if="generation.title" class="mb-1 font-medium">{{ generation.title }}</h3>
         <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-black/55">
             <span class="rounded-full bg-accent/10 px-2 py-0.5 font-medium text-accent">{{ generation.voice_name }}</span>
             <span class="uppercase">{{ generation.language }}</span>
@@ -38,7 +46,8 @@ const retry = () => router.post(`/generations/${props.generation.id}/retry`, {},
 
         <div v-if="generation.status === 'completed'" class="mt-3 flex flex-wrap items-center gap-3">
             <audio :key="generation.audio_url" :src="generation.audio_url" controls preload="none" class="h-10 min-w-0 flex-1"></audio>
-            <a :href="`${generation.audio_url}&download=1`" class="btn-ghost">Télécharger</a>
+            <a :href="`${generation.audio_url}&download=mp3`" class="btn-ghost">Télécharger{{ generation.wav_url ? ' MP3' : '' }}</a>
+            <a v-if="generation.wav_url" :href="generation.wav_url" class="btn-ghost">WAV</a>
         </div>
 
         <div v-else-if="generation.status === 'failed'" class="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -69,6 +78,7 @@ const retry = () => router.post(`/generations/${props.generation.id}/retry`, {},
                 {{ showSegments ? 'Masquer les passages' : `Voir les ${generation.segments_total} passage(s)` }}
             </button>
             <button class="text-black/60 underline hover:text-black" @click="$emit('reuse', generation)">Réutiliser le texte</button>
+            <button class="text-black/60 underline hover:text-black" @click="rename">{{ generation.title ? 'Renommer' : 'Nommer' }}</button>
             <button class="text-red-600/80 underline hover:text-red-700" @click="remove">{{ running ? 'Arrêter et supprimer' : 'Supprimer' }}</button>
         </div>
 

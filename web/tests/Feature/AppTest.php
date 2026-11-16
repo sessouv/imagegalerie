@@ -102,7 +102,7 @@ class AppTest extends TestCase
 
         Http::fake([
             'engine.test/v1/speech' => $sequence,
-            'engine.test/v1/encode' => Http::response('MP3DATA'),
+            'engine.test/v1/encode' => fn () => Http::response('MP3DATA'),
         ]);
     }
 
@@ -158,6 +158,7 @@ class AppTest extends TestCase
         $this->assertSame($count * 500 + ($count - 2) * 250 + 650, $generation->duration_ms);
         $this->assertSame($count, $generation->present()['segments_done']);
         Storage::assertMissing($generation->directory().'/assemblage.wav');
+        Storage::assertExists($generation->wav_path);
 
         Http::assertSent(fn (Request $r) => str_ends_with($r->url(), '/v1/speech')
             && $r->hasHeader('Authorization', 'Bearer secret')
@@ -244,7 +245,7 @@ class AppTest extends TestCase
         $user = User::factory()->create();
         $this->actingAs($user)->post('/generations', ['text' => "Un.\nDeux."] + $this->payload);
         $generation = Generation::sole();
-        $this->assertCount(3, Storage::allFiles($generation->directory()));
+        $this->assertCount(4, Storage::allFiles($generation->directory()));
 
         $this->actingAs($user)->delete("/generations/{$generation->id}")->assertRedirect();
 
@@ -399,5 +400,103 @@ class AppTest extends TestCase
 
         $this->put($url, ['settings' => null])->assertSessionHasNoErrors();
         $this->assertNull($voice->refresh()->settings);
+    }
+
+    public function test_dialogue_gives_each_line_its_voice_sample_and_favourite_settings(): void
+    {
+        $this->fakeEngine();
+        $user = User::factory()->create();
+        Storage::put('voices/c.wav', 'SAMPLE-CAMILLE');
+        Storage::put('voices/p.wav', 'SAMPLE-PAUL');
+        $camille = Voice::factory()->for($user)->create(['name' => 'Camille', 'sample_path' => 'voices/c.wav']);
+        Voice::factory()->for($user)->create(['name' => 'Paul', 'sample_path' => 'voices/p.wav',
+            'settings' => ['exaggeration' => 1.1, 'cfg_weight' => 0.2, 'temperature' => 0.6]]);
+
+        $text = "Il était une fois.\n[camille] Bonjour Paul !\nTu vas bien ?\n[ Paul ]\nTrès bien.";
+        $this->actingAs($user)->post('/generations', ['text' => $text, 'dialogue' => true] + $this->payload)
+            ->assertSessionHasNoErrors();
+
+        $generation = Generation::sole();
+        $this->assertSame('completed', $generation->status);
+        $this->assertSame('Dialogue : Voix par défaut, Camille, Paul', $generation->voice_name);
+        $this->assertSame(
+            [[null, 'Il était une fois.'], ['Camille', 'Bonjour Paul !'], ['Camille', 'Tu vas bien ?'], ['Paul', 'Très bien.']],
+            $generation->segments->map(fn ($s) => [$s->voice_name, $s->text])->all(),
+        );
+
+        $sent = fn (string $text, callable $check) => Http::assertSent(
+            fn (Request $r) => str_ends_with($r->url(), '/v1/speech') && str_contains($r->body(), $text) && $check($r->body()));
+        $sent('Il était une fois.', fn ($b) => ! str_contains($b, 'SAMPLE-'));
+        $sent('Tu vas bien ?', fn ($b) => str_contains($b, 'SAMPLE-CAMILLE') && preg_match('/name="exaggeration"\s+0\.5\s/', $b));
+        $sent('Très bien.', fn ($b) => str_contains($b, 'SAMPLE-PAUL') && preg_match('/name="exaggeration"\s+1\.1\s/', $b));
+
+        // Corriger une réplique ne touche pas au texte balisé
+        $segment = $generation->segments[1];
+        $this->postJson("/generations/{$generation->id}/segments/{$segment->id}/regenerate", ['text' => 'Salut Paul !'])
+            ->assertOk()->assertJsonPath('segments.1.voice_name', 'Camille');
+        $this->assertSame($text, $generation->refresh()->text);
+
+        // Une voix supprimée ne doit pas être remplacée en silence par la voix par défaut
+        $camille->delete();
+        $this->postJson("/generations/{$generation->id}/segments/{$segment->id}/regenerate", ['text' => 'Coucou !']);
+        $generation->refresh();
+        $this->assertSame('failed', $generation->status);
+        $this->assertSame('La voix « Camille » a été supprimée.', $generation->error);
+    }
+
+    public function test_dialogue_with_an_unknown_voice_is_refused_and_brackets_are_plain_text_otherwise(): void
+    {
+        $this->fakeEngine();
+        $user = User::factory()->create();
+        $text = '[Inconnue] Bonjour.';
+
+        $this->actingAs($user)->post('/generations', ['text' => $text, 'dialogue' => true] + $this->payload)
+            ->assertSessionHasErrors(['text' => 'Voix inconnue dans le dialogue : « Inconnue ».']);
+        $this->assertSame(0, Generation::count());
+
+        $this->post('/generations', ['text' => $text] + $this->payload)->assertSessionHasNoErrors();
+        $this->assertSame('[Inconnue] Bonjour.', Generation::sole()->segments->sole()->text);
+    }
+
+    public function test_output_options_pauses_volume_title_and_formats(): void
+    {
+        $this->fakeEngine();
+        $user = User::factory()->create();
+        $options = ['title' => ' Épisode 3 : l\'été ', 'pause_ms' => 0, 'paragraph_pause_ms' => 2000, 'normalize' => true];
+
+        $this->actingAs($user)->post('/generations', ['text' => "Un.\nDeux.", 'pause_ms' => 9999] + $this->payload)
+            ->assertSessionHasErrors('pause_ms');
+        $this->post('/generations', ['text' => "Un.\nDeux."] + $options + $this->payload)->assertSessionHasNoErrors();
+
+        $generation = Generation::withProgress()->sole();
+        $this->assertSame(500 + 2000 + 500, $generation->duration_ms);
+        $this->assertSame('Épisode 3 : l\'été', $generation->title);
+        // Volume homogène : le WAV final est produit par le moteur, puis converti en MP3
+        $encodes = Http::recorded(fn (Request $r) => str_ends_with($r->url(), '/v1/encode'));
+        $this->assertCount(2, $encodes);
+        $this->assertSame('MP3DATA', Storage::get($generation->wav_path));
+
+        $url = "/generations/{$generation->id}/audio";
+        $this->get($url)->assertOk()->assertHeader('Content-Type', 'audio/mpeg');
+        $this->get($url.'?download=1')->assertDownload('episode-3-lete.mp3');
+        $this->get($url.'?download=wav')->assertDownload('episode-3-lete.wav');
+        $this->assertStringEndsWith('&download=wav', $generation->present()['wav_url']);
+
+        $this->patch("/generations/{$generation->id}", ['title' => ''])->assertSessionHasNoErrors();
+        $this->get($url.'?download=mp3')->assertDownload("voix-{$generation->id}.mp3");
+        $this->patch("/generations/{$generation->id}", ['title' => str_repeat('a', 121)])->assertSessionHasErrors('title');
+    }
+
+    public function test_without_volume_levelling_the_assembled_wav_is_kept_as_is(): void
+    {
+        $this->fakeEngine();
+        $user = User::factory()->create();
+
+        $this->actingAs($user)->post('/generations', ['text' => 'Un.', 'normalize' => false] + $this->payload);
+
+        $generation = Generation::sole();
+        $this->assertCount(1, Http::recorded(fn (Request $r) => str_ends_with($r->url(), '/v1/encode')));
+        $this->assertStringStartsWith('RIFF', Storage::get($generation->wav_path));
+        $this->assertSame('MP3DATA', Storage::get($generation->audio_path));
     }
 }

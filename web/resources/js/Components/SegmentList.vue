@@ -80,7 +80,10 @@ async function regenerate(segment, text) {
                         </div>
                     </template>
                     <template v-else>
-                        <p class="text-sm">{{ segment.text }}</p>
+                        <p class="text-sm">
+                            <span v-if="generation.dialogue" class="mr-1.5 rounded-full bg-accent/10 px-2 py-0.5 text-xs font-medium text-accent">{{ segment.voice_name }}</span>
+                            {{ segment.text }}
+                        </p>
                         <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2">
                             <audio v-if="segment.status === 'completed'" :src="segment.audio_url" controls preload="none" class="h-9 w-64 max-w-full"></audio>
                             <span v-else-if="segment.status === 'failed'" class="text-sm text-red-700">Échec{{ segment.error ? ` : ${segment.error}` : '' }}</span>

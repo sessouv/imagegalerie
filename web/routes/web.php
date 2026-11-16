@@ -20,6 +20,7 @@ Route::middleware('auth')->group(function () {
     Route::get('/generations', [GenerationController::class, 'index'])->name('generations.index');
     Route::post('/generations', [GenerationController::class, 'store'])->name('generations.store');
     Route::get('/generations/{generation}/audio', [GenerationController::class, 'audio'])->name('generations.audio');
+    Route::patch('/generations/{generation}', [GenerationController::class, 'update'])->name('generations.update');
     Route::delete('/generations/{generation}', [GenerationController::class, 'destroy'])->name('generations.destroy');
     Route::post('/generations/{generation}/retry', [GenerationController::class, 'retry'])->name('generations.retry');
     Route::get('/generations/{generation}/segments', [GenerationController::class, 'segments'])->name('generations.segments');

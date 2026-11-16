@@ -143,3 +143,46 @@ def test_clean_sample_rejects_bad_input():
         assert client.post("/v1/samples/clean", files={"sample": ("v.wav", _wav(5), "audio/wav")}).status_code == 401
         assert post(b"pas de l'audio") == 422
         assert post(_voice_like(lead=4, body=1.5, tail=4, gain=0.3)) == 422
+
+
+def _rms(wav_bytes: bytes) -> float:
+    with wave.open(io.BytesIO(wav_bytes)) as f:
+        pcm = np.frombuffer(f.readframes(f.getnframes()), dtype="<i2") / 32767
+    return float(np.sqrt(np.mean(pcm**2)))
+
+
+def test_encode_levels_quiet_and_loud_files_to_the_same_volume():
+    with TestClient(app) as client:
+        def final(gain):
+            source = _voice_like(lead=0, body=6, tail=0, gain=gain)
+            r = client.post(
+                "/v1/encode", files={"audio_file": ("a.wav", source, "audio/wav")},
+                data={"format": "wav", "normalize": "true"}, headers=AUTH,
+            )
+            assert r.status_code == 200 and r.headers["content-type"] == "audio/wav"
+            with wave.open(io.BytesIO(r.content)) as f:
+                assert f.getframerate() == 16000 and abs(f.getnframes() / 16000 - 6) < 0.1
+            return _rms(r.content)
+
+        quiet, loud = final(0.02), final(0.5)
+        # Un écart de 1 à 25 en entrée, moins de 10 % en sortie
+        assert abs(quiet - loud) / loud < 0.1
+
+        untouched = client.post(
+            "/v1/encode", files={"audio_file": ("a.wav", _voice_like(0, 6, 0, 0.02), "audio/wav")},
+            data={"format": "wav"}, headers=AUTH,
+        )
+        assert _rms(untouched.content) < quiet / 3
+
+
+def test_encode_handles_silence_and_unknown_format():
+    with TestClient(app) as client:
+        r = client.post(
+            "/v1/encode", files={"audio_file": ("a.wav", _wav(2), "audio/wav")},
+            data={"format": "mp3", "normalize": "true"}, headers=AUTH,
+        )
+        assert r.status_code == 200 and len(r.content) > 100
+        r = client.post(
+            "/v1/encode", files={"audio_file": ("a.wav", _wav(2), "audio/wav")}, data={"format": "ogg"}, headers=AUTH
+        )
+        assert r.status_code == 422

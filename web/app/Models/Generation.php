@@ -10,8 +10,9 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
-#[Fillable(['user_id', 'voice_id', 'voice_name', 'text', 'language', 'settings', 'status', 'audio_path', 'duration_ms', 'error'])]
+#[Fillable(['user_id', 'voice_id', 'voice_name', 'title', 'wav_path', 'text', 'language', 'settings', 'status', 'audio_path', 'duration_ms', 'error'])]
 class Generation extends Model
 {
     use HasFactory;
@@ -89,11 +90,33 @@ class Generation extends Model
         }
     }
 
+    /** Réglages transmis au moteur vocal pour chaque passage. */
+    public function engineSettings(): array
+    {
+        return array_intersect_key($this->settings, array_flip(['exaggeration', 'cfg_weight', 'temperature', 'seed']));
+    }
+
+    public function isDialogue(): bool
+    {
+        return (bool) ($this->settings['dialogue'] ?? false);
+    }
+
+    /** Nom du fichier téléchargé, sans extension. */
+    public function filename(): string
+    {
+        return Str::slug((string) $this->title) ?: 'voix-'.$this->id;
+    }
+
     /** Forme envoyée à l'interface. */
     public function present(): array
     {
+        $done = $this->status === self::COMPLETED;
+        $url = route('generations.audio', $this).'?v='.$this->updated_at->timestamp;
+
         return [
             'id' => $this->id,
+            'title' => $this->title,
+            'dialogue' => $this->isDialogue(),
             'text' => $this->text,
             'language' => $this->language,
             'voice_id' => $this->voice_id,
@@ -106,9 +129,8 @@ class Generation extends Model
             'segments_done' => (int) $this->segments_done_count,
             'author' => $this->user?->name,
             'created_at' => $this->created_at->toIso8601String(),
-            'audio_url' => $this->status === self::COMPLETED
-                ? route('generations.audio', $this).'?v='.$this->updated_at->timestamp
-                : null,
+            'audio_url' => $done ? $url : null,
+            'wav_url' => $done && $this->wav_path ? $url.'&download=wav' : null,
         ];
     }
 }

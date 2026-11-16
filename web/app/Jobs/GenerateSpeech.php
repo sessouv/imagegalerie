@@ -11,6 +11,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use RuntimeException;
 use Throwable;
 
 /**
@@ -88,14 +89,23 @@ class GenerateSpeech implements ShouldQueue
         $generation = $this->generation;
         $segment->update(['status' => Generation::PROCESSING, 'error' => null]);
 
+        // La voix est celle du passage : dans un dialogue, elle change d'une réplique à l'autre
+        $voice = $segment->voice;
+        if (! $voice && $segment->voice_name) {
+            throw new RuntimeException('La voix « '.$segment->voice_name.' » a été supprimée.');
+        }
         $sample = null;
-        if ($voice = $generation->voice) {
+        if ($voice) {
             $path = $voice->activeSamplePath();
             $sample = ['contents' => Storage::get($path), 'filename' => basename($path)];
         }
 
+        // Dans un dialogue, chaque voix garde ses réglages favoris
+        $settings = $generation->engineSettings();
+        if ($generation->isDialogue() && $voice?->settings) {
+            $settings = $voice->settings + $settings;
+        }
         // Avec une graine fixe, chaque nouvel essai d'un passage doit tout de même varier
-        $settings = $generation->settings;
         if (isset($settings['seed'])) {
             $settings['seed'] = ($settings['seed'] + $segment->attempts) % 2147483647;
         }
@@ -121,27 +131,38 @@ class GenerateSpeech implements ShouldQueue
     private function assemble(VoiceEngine $engine, WavJoiner $joiner): void
     {
         $generation = $this->generation;
+        $settings = $generation->settings;
+        $pause = (int) ($settings['pause_ms'] ?? config('voice.pause_ms'));
+        $paragraphPause = (int) ($settings['paragraph_pause_ms'] ?? config('voice.paragraph_pause_ms'));
 
         $parts = $generation->segments()->get()->map(fn (GenerationSegment $segment) => [
             'path' => Storage::path($segment->audio_path),
-            'pause_ms' => config($segment->ends_paragraph ? 'voice.paragraph_pause_ms' : 'voice.pause_ms'),
+            'pause_ms' => $segment->ends_paragraph ? $paragraphPause : $pause,
         ])->all();
 
-        $path = $generation->directory().'/audio-'.Str::random(8).'.mp3';
-        $wav = Storage::path($generation->directory().'/assemblage.wav');
+        $suffix = Str::random(8);
+        $mp3 = $generation->directory().'/audio-'.$suffix.'.mp3';
+        $wav = $generation->directory().'/audio-'.$suffix.'.wav';
+        $raw = Storage::path($generation->directory().'/assemblage.wav');
 
         try {
-            $duration = $joiner->join($parts, $wav);
-            $engine->encodeMp3($wav, Storage::path($path));
+            $duration = $joiner->join($parts, $raw);
+            if ($settings['normalize'] ?? false) {
+                $engine->encode($raw, Storage::path($wav), 'wav', normalize: true);
+            } else {
+                rename($raw, Storage::path($wav));
+            }
+            $engine->encode(Storage::path($wav), Storage::path($mp3), 'mp3');
+        } catch (Throwable $e) {
+            Storage::delete([$wav, $mp3]);
+            throw $e;
         } finally {
-            @unlink($wav);
+            @unlink($raw);
         }
 
-        $previous = $generation->audio_path;
-        $generation->update(['audio_path' => $path, 'duration_ms' => $duration]);
-        if ($previous) {
-            Storage::delete($previous);
-        }
+        $previous = array_filter([$generation->audio_path, $generation->wav_path]);
+        $generation->update(['audio_path' => $mp3, 'wav_path' => $wav, 'duration_ms' => $duration]);
+        Storage::delete($previous);
     }
 
     private function markFailed(string $message, ?GenerationSegment $segment = null): void

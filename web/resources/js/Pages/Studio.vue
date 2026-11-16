@@ -1,6 +1,6 @@
 <script setup>
 import { Head, Link, router, useForm } from '@inertiajs/vue3';
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import GenerationItem from '../Components/GenerationItem.vue';
 import { useGenerationPolling } from '../polling';
 
@@ -10,10 +10,16 @@ const props = defineProps({
     maxChars: Number,
     generations: Array,
     engine: Object,
+    defaults: Object,
 });
 
 const form = useForm({
+    title: '',
     text: '',
+    dialogue: false,
+    pause_ms: props.defaults.pause_ms,
+    paragraph_pause_ms: props.defaults.paragraph_pause_ms,
+    normalize: true,
     language: 'fr',
     voice_id: null,
     exaggeration: 0.5,
@@ -41,7 +47,25 @@ const settingsSaved = computed(() => {
 });
 const saveSettings = () => router.put(`/voices/${form.voice_id}/settings`, { settings: currentSettings() }, { preserveScroll: true, preserveState: true });
 
-const submit = () => form.post('/generations', { preserveScroll: true, preserveState: true });
+const submit = () => form.post('/generations', {
+    preserveScroll: true,
+    preserveState: true,
+    onSuccess: () => { form.title = ''; },
+});
+
+// Insère la balise d'une voix au début d'une nouvelle réplique, à l'endroit du curseur
+const textarea = ref(null);
+function insertVoice(name) {
+    const el = textarea.value;
+    const start = el.selectionStart ?? form.text.length;
+    const before = form.text.slice(0, start);
+    const tag = `${before && !before.endsWith('\n') ? '\n' : ''}[${name}] `;
+    form.text = before + tag + form.text.slice(el.selectionEnd ?? start);
+    const caret = start + tag.length;
+    nextTick(() => { el.focus(); el.setSelectionRange(caret, caret); });
+}
+
+const seconds = (ms) => (ms / 1000).toLocaleString('fr-FR', { minimumFractionDigits: 2 });
 
 // Réutiliser un audio reprend ses propres réglages, pas les favoris de la voix
 let reusing = false;
@@ -83,9 +107,18 @@ onMounted(() => {
 
     <form class="mt-6 grid gap-6 lg:grid-cols-[1fr_20rem]" @submit.prevent="submit">
         <div class="card flex flex-col p-4">
+            <label for="title" class="sr-only">Nom de l'audio</label>
+            <input
+                id="title"
+                v-model="form.title"
+                maxlength="120"
+                class="mb-3 border-0 border-b border-black/10 bg-transparent pb-2 text-sm font-medium outline-none placeholder:font-normal placeholder:text-black/35 focus:border-accent"
+                placeholder="Nom de l'audio (facultatif) : il sert aussi de nom au fichier téléchargé"
+            />
             <label for="text" class="sr-only">Texte à lire</label>
             <textarea
                 id="text"
+                ref="textarea"
                 v-model="form.text"
                 :maxlength="maxChars"
                 rows="12"
@@ -97,11 +130,39 @@ onMounted(() => {
                 <button class="btn-primary" :disabled="form.processing || !form.text.trim()">Générer la voix</button>
             </div>
             <p v-if="form.errors.text" class="error">{{ form.errors.text }}</p>
+
+            <label class="mt-3 flex items-center gap-2 text-sm">
+                <input v-model="form.dialogue" type="checkbox" class="accent-accent" />
+                Dialogue à plusieurs voix
+            </label>
+            <div v-if="form.dialogue" class="mt-2 rounded-lg bg-black/5 p-3 text-sm">
+                <p>
+                    Commencez une réplique par le nom d'une voix entre crochets, par exemple
+                    <code class="rounded bg-white px-1">[{{ voices[0]?.name ?? 'Camille' }}] Bonjour !</code>
+                    Les lignes suivantes gardent cette voix jusqu'à la prochaine balise ; celles placées avant la première
+                    balise sont lues par la voix du narrateur. Chaque voix utilise ses réglages favoris si elle en a.
+                </p>
+                <div v-if="voices.length" class="mt-2 flex flex-wrap items-center gap-2">
+                    <span class="text-xs text-black/55">Insérer :</span>
+                    <button
+                        v-for="voice in voices"
+                        :key="voice.id"
+                        type="button"
+                        class="rounded-full border border-accent/30 bg-white px-2.5 py-0.5 text-xs font-medium text-accent hover:bg-accent/10"
+                        @click="insertVoice(voice.name)"
+                    >
+                        {{ voice.name }}
+                    </button>
+                </div>
+                <p v-else class="mt-2 text-xs text-black/55">
+                    Aucune voix clonée pour le moment : <Link href="/voices" class="text-accent underline">ajoutez-en</Link> pour créer un dialogue.
+                </p>
+            </div>
         </div>
 
         <div class="card h-fit space-y-5 p-5">
             <div>
-                <label class="label" for="voice">Voix</label>
+                <label class="label" for="voice">{{ form.dialogue ? 'Voix du narrateur' : 'Voix' }}</label>
                 <select id="voice" v-model="form.voice_id" class="field">
                     <option :value="null">Voix par défaut</option>
                     <option v-for="voice in voices" :key="voice.id" :value="voice.id">{{ voice.name }}</option>
@@ -147,6 +208,26 @@ onMounted(() => {
                     <input id="seed" v-model.number="form.seed" type="number" min="0" class="field" placeholder="Aléatoire" />
                     <p class="text-xs text-black/50">Un même nombre redonne le même rendu pour un même texte.</p>
                 </div>
+                <div>
+                    <label class="label flex justify-between" for="pause">
+                        Pause entre les phrases <span class="font-normal text-black/50">{{ seconds(form.pause_ms) }} s</span>
+                    </label>
+                    <input id="pause" v-model.number="form.pause_ms" type="range" min="0" max="1500" step="50" class="w-full accent-accent" />
+                </div>
+                <div>
+                    <label class="label flex justify-between" for="ppause">
+                        Pause entre les paragraphes <span class="font-normal text-black/50">{{ seconds(form.paragraph_pause_ms) }} s</span>
+                    </label>
+                    <input id="ppause" v-model.number="form.paragraph_pause_ms" type="range" min="0" max="3000" step="50" class="w-full accent-accent" />
+                    <p class="text-xs text-black/50">Chaque retour à la ligne commence un paragraphe.</p>
+                </div>
+                <label class="flex items-start gap-2 text-sm">
+                    <input v-model="form.normalize" type="checkbox" class="mt-0.5 accent-accent" />
+                    <span>
+                        Volume homogène
+                        <span class="block text-xs text-black/50">Tous vos audios sortent au même niveau sonore.</span>
+                    </span>
+                </label>
             </div>
 
             <div v-if="selectedVoice" class="border-t border-black/10 pt-4 text-xs">

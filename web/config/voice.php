@@ -15,7 +15,7 @@ return [
     // Longueur maximale d'un passage : au-delà, le modèle perd en stabilité
     'segment_chars' => (int) env('VOICE_SEGMENT_CHARS', 280),
 
-    // Silences insérés à l'assemblage, en millisecondes
+    // Silences insérés à l'assemblage, en millisecondes (valeurs par défaut du formulaire)
     'pause_ms' => (int) env('VOICE_PAUSE_MS', 250),
     'paragraph_pause_ms' => (int) env('VOICE_PARAGRAPH_PAUSE_MS', 650),
 

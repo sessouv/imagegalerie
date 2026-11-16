@@ -132,23 +132,34 @@ async def clean_sample(sample: UploadFile = File(...)):
 
 
 @app.post("/v1/encode", dependencies=[Depends(require_token)])
-async def encode(audio_file: UploadFile = File(...)):
-    """Convertit un fichier audio (l'assemblage des passages) en MP3."""
+async def encode(
+    audio_file: UploadFile = File(...),
+    format: str = Form("mp3"),
+    normalize: bool = Form(False),
+):
+    """Produit l'audio final à partir de l'assemblage des passages.
+
+    `normalize` ramène le volume à un niveau constant, identique d'un fichier à l'autre.
+    """
+    if format not in ("mp3", "wav"):
+        raise HTTPException(422, "Format inconnu (mp3 ou wav).")
+
     tmp = tempfile.mkdtemp()
     cleanup = BackgroundTask(shutil.rmtree, tmp, ignore_errors=True)
-    src, dst = os.path.join(tmp, "source"), os.path.join(tmp, "audio.mp3")
+    src, dst = os.path.join(tmp, "source"), os.path.join(tmp, f"audio.{format}")
     try:
         with open(src, "wb") as f:
             while chunk := await audio_file.read(1024 * 1024):
                 f.write(chunk)
-        await run_in_threadpool(audio.file_to_mp3, src, dst)
+        await run_in_threadpool(audio.encode_file, src, dst, format, normalize)
     except audio.AudioError as e:
         shutil.rmtree(tmp, ignore_errors=True)
         raise HTTPException(422, str(e))
     except BaseException:
         shutil.rmtree(tmp, ignore_errors=True)
         raise
-    return FileResponse(dst, media_type="audio/mpeg", background=cleanup)
+    media = "audio/mpeg" if format == "mp3" else "audio/wav"
+    return FileResponse(dst, media_type=media, background=cleanup)
 
 
 def _render(text: str, params: SpeechParams, sample_path: str | None):

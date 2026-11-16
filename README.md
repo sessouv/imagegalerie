@@ -10,6 +10,10 @@ Outil interne de synthèse vocale et de clonage de voix (français et anglais), 
   phonétique au moment de la lecture, sans modifier le texte affiché.
 - **Voix soignées** : nettoyage automatique de l'échantillon (bruit de fond, silences, volume), l'original restant
   disponible, et réglages favoris mémorisés pour chaque voix.
+- **Dialogues à plusieurs voix** : chaque réplique commence par le nom d'une voix entre crochets
+  (`[Camille] Bonjour !`), le tout sort en un seul fichier.
+- **Sortie audio** : téléchargement en MP3 ou WAV, volume homogène d'un fichier à l'autre, durée des pauses
+  réglable, nom de fichier personnalisé.
 - **Historique** partagé par l'équipe.
 
 ## Architecture

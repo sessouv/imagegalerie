@@ -72,8 +72,12 @@ class VoiceEngine
         return $response->body();
     }
 
-    /** Convertit un fichier WAV en MP3, sans charger l'audio en mémoire. */
-    public function encodeMp3(string $wavPath, string $mp3Path): void
+    /**
+     * Produit l'audio final (MP3 ou WAV) à partir d'un fichier WAV, sans le charger en mémoire.
+     *
+     * @param  bool  $normalize  Ramène le volume à un niveau constant d'un fichier à l'autre
+     */
+    public function encode(string $wavPath, string $destination, string $format, bool $normalize = false): void
     {
         $source = fopen($wavPath, 'rb');
 
@@ -81,9 +85,12 @@ class VoiceEngine
             $response = Http::withToken((string) config('voice.engine_token'))
                 ->timeout(config('voice.timeout'))
                 ->connectTimeout(10)
-                ->sink($mp3Path)
+                ->sink($destination)
                 ->attach('audio_file', $source, 'audio.wav')
-                ->post(config('voice.engine_url').'/v1/encode');
+                ->post(config('voice.engine_url').'/v1/encode', [
+                    'format' => $format,
+                    'normalize' => $normalize ? 'true' : 'false',
+                ]);
         } catch (ConnectionException) {
             throw new RuntimeException('Le moteur vocal est injoignable.');
         } finally {
@@ -93,7 +100,7 @@ class VoiceEngine
         }
 
         if ($response->failed()) {
-            @unlink($mp3Path);
+            @unlink($destination);
             throw new RuntimeException('L\'assemblage de l\'audio a échoué ('.$response->status().').');
         }
     }

@@ -16,6 +16,10 @@ class StudioController extends Controller
             'voices' => fn () => Voice::orderBy('name')->get(['id', 'name', 'language', 'settings']),
             'languages' => config('voice.languages'),
             'maxChars' => config('voice.max_chars'),
+            'defaults' => [
+                'pause_ms' => config('voice.pause_ms'),
+                'paragraph_pause_ms' => config('voice.paragraph_pause_ms'),
+            ],
             'generations' => fn () => Generation::withProgress()->latest('id')->limit(8)->get()
                 ->map->present(),
             'engine' => fn () => $engine->health(),

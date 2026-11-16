@@ -4,6 +4,7 @@ import hashlib
 import os
 import threading
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 
 import numpy as np
@@ -58,13 +59,14 @@ class ChatterboxDriver(Driver):
     """Chatterbox Multilingual (Resemble AI, licence MIT) : synthèse et clonage zero-shot."""
 
     name = "chatterbox"
+    MAX_VOICES = 8
 
     def __init__(self, device: str = "auto", threads: int = 0):
         self._device = device
         self._threads = threads
         self._model = None
         self._lock = threading.Lock()
-        self._conds_key: str | None = None
+        self._voices: OrderedDict[str, object] = OrderedDict()
         self._default_conds = None
 
     @property
@@ -101,21 +103,28 @@ class ChatterboxDriver(Driver):
         return wav.squeeze().detach().cpu().numpy().astype(np.float32)
 
     def _select_voice(self, sample_path: str | None, exaggeration: float) -> None:
-        """Calcule l'empreinte de la voix une seule fois par échantillon consécutif."""
-        if sample_path is None:
-            key = "default"
-        else:
-            with open(sample_path, "rb") as f:
-                key = hashlib.sha256(f.read()).hexdigest()
-        if key == self._conds_key:
-            return
+        """Calcule l'empreinte d'une voix une seule fois, et garde les dernières en mémoire.
+
+        Un dialogue alterne entre plusieurs voix : sans cette mémoire, l'empreinte
+        serait recalculée à chaque réplique.
+        """
         if sample_path is None:
             if self._default_conds is None:
                 raise RuntimeError("Aucune voix par défaut fournie par le modèle.")
             self._model.conds = self._default_conds
-        else:
-            self._model.prepare_conditionals(sample_path, exaggeration=exaggeration)
-        self._conds_key = key
+            return
+
+        with open(sample_path, "rb") as f:
+            key = hashlib.sha256(f.read()).hexdigest()
+        if key in self._voices:
+            self._voices.move_to_end(key)
+            self._model.conds = self._voices[key]
+            return
+
+        self._model.prepare_conditionals(sample_path, exaggeration=exaggeration)
+        self._voices[key] = self._model.conds
+        while len(self._voices) > self.MAX_VOICES:
+            self._voices.popitem(last=False)
 
 
 def make_driver(name: str, device: str = "auto", threads: int = 0) -> Driver:
