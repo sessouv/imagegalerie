@@ -1,0 +1,115 @@
+# Timbre
+
+Outil interne de synthèse vocale et de clonage de voix (français et anglais), bâti sur des modèles open source.
+
+- **Synthèse vocale** : un texte, une voix, des réglages d'expressivité, un MP3 à écouter et télécharger.
+- **Clonage de voix** : 10 à 20 secondes d'audio (fichier importé ou enregistrement au micro) suffisent pour créer une voix réutilisable.
+- **Longs textes** : le texte est découpé en passages générés un par un, avec progression, reprise après
+  interruption, et régénération d'un seul passage (texte corrigeable) sans refaire le reste.
+- **Dictionnaire de prononciation** : noms propres, sigles et mots étrangers sont remplacés par leur écriture
+  phonétique au moment de la lecture, sans modifier le texte affiché.
+- **Voix soignées** : nettoyage automatique de l'échantillon (bruit de fond, silences, volume), l'original restant
+  disponible, et réglages favoris mémorisés pour chaque voix.
+- **Dialogues à plusieurs voix** : chaque réplique commence par le nom d'une voix entre crochets
+  (`[Camille] Bonjour !`), le tout sort en un seul fichier.
+- **Sortie audio** : téléchargement en MP3 ou WAV, volume homogène d'un fichier à l'autre, durée des pauses
+  réglable, nom de fichier personnalisé.
+- **Transcription** : un fichier audio ou vidéo devient un texte et des sous-titres (.srt), grâce au modèle
+  open source Whisper.
+- **Projets et recherche** : les audios se rangent par projet et se retrouvent par nom, texte ou voix.
+- **API** : vos autres sites demandent un audio ou une transcription avec une clé d'accès (écran « API »,
+  qui contient le mode d'emploi et des exemples).
+- **Historique** partagé par l'équipe.
+
+## Architecture
+
+| Dossier | Rôle | Technologies |
+| --- | --- | --- |
+| `web/` | Interface, comptes, bibliothèque de voix, file d'attente | Laravel 13, Inertia, Vue 3, Tailwind |
+| `engine/` | Moteur vocal : synthèse, clonage, nettoyage audio, transcription | Python, FastAPI, [Chatterbox Multilingual](https://github.com/resemble-ai/chatterbox) et [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (licences MIT) |
+
+L'application Laravel place chaque demande dans une file d'attente ; un worker appelle le moteur
+(`POST /v1/speech`, protégé par un jeton partagé) et enregistre le MP3. Le moteur ne conserve aucune
+donnée : il peut être déplacé sur une autre machine (par exemple un serveur GPU) en changeant
+seulement `VOICE_ENGINE_URL`.
+
+Chaque texte est découpé en passages de 280 caractères au plus. Le worker traite une étape à la fois
+(un passage, puis l'assemblage final en MP3) : un arrêt ne fait perdre que le passage en cours.
+Chatterbox appose sur chaque audio un filigrane inaudible (PerTh) qui permet d'identifier un contenu généré.
+
+## Développement local
+
+Moteur, en mode test (aucun modèle à télécharger, l'audio est un simple signal sonore) :
+
+```bash
+cd engine
+python3 -m venv .venv && . .venv/bin/activate
+pip install -r requirements-dev.txt
+ENGINE_DRIVER=fake ENGINE_TOKEN=dev-token uvicorn app.main:app --port 8100
+```
+
+Application (ffmpeg doit être installé pour le moteur) :
+
+```bash
+cd web
+composer install && npm install
+cp .env.example .env && php artisan key:generate   # puis VOICE_ENGINE_TOKEN=dev-token
+php artisan migrate
+php artisan user:create vous@exemple.com            # il n'y a pas d'inscription publique
+npm run dev            # terminal 1
+php artisan serve      # terminal 2
+php artisan queue:work # terminal 3
+```
+
+### Windows (Laragon)
+
+Une fois le moteur installé dans `engine\.venv` et `web\.env` rempli, double-cliquer sur `demarrer.bat` :
+il reprend les générations interrompues, ouvre trois fenêtres (moteur, site, file d'attente) puis le
+navigateur. Fermer ces fenêtres arrête tout.
+
+Après une mise à jour du code : `composer install`, `php artisan migrate`, `npm install && npm run build`
+dans `web/`, `.venv\Scripts\pip install -r requirements-model.txt` dans `engine/`, puis relancer `demarrer.bat`.
+
+Le modèle de transcription (`ENGINE_WHISPER_MODEL`, `small` par défaut) est téléchargé à la première
+transcription. Pour transcrire de gros fichiers, relever `upload_max_filesize` et `post_max_size` dans PHP.
+
+Si le worker a été arrêté en pleine génération, `php artisan generations:resume` (à lancer worker arrêté)
+la remet en file ; sinon elle reprend seule au bout d'une dizaine de minutes.
+
+Tests : `cd engine && pytest` et `cd web && php artisan test`.
+
+## Mise en production
+
+Le moteur vocal a besoin d'un vrai serveur : **VPS OVH**, pas l'hébergement mutualisé o2switch
+(mémoire et processus longs insuffisants). L'application `web/` peut vivre sur le même VPS.
+
+### Moteur (VPS, Docker)
+
+```bash
+cd engine
+cp .env.example .env    # renseigner ENGINE_TOKEN
+docker compose up -d --build
+curl http://127.0.0.1:8100/health   # "loading" pendant le téléchargement du modèle, puis "ok"
+```
+
+Au premier démarrage, les poids du modèle (plusieurs Go) sont téléchargés depuis Hugging Face et
+conservés dans le volume `models`. Prévoir au moins 8 Go de RAM. Sans GPU, la génération est lente :
+compter nettement plus que la durée de l'audio produit. Le port n'est ouvert que sur `127.0.0.1`.
+
+### Application (Plesk)
+
+1. Domaine en PHP 8.3, racine du site sur `web/public`, base MySQL.
+2. `composer install --no-dev --optimize-autoloader`, `npm ci && npm run build`.
+3. `.env` : `APP_ENV=production`, `APP_DEBUG=false`, `APP_URL`, accès MySQL,
+   `VOICE_ENGINE_URL=http://127.0.0.1:8100`, `VOICE_ENGINE_TOKEN` identique à `ENGINE_TOKEN`.
+4. `php artisan key:generate`, `php artisan migrate --force`, `php artisan user:create …`.
+5. Worker de file d'attente : tâche planifiée Plesk, chaque minute :
+   `php artisan queue:work --stop-when-empty --max-time=3300`
+   (ou un service systemd / Supervisor exécutant `php artisan queue:work`).
+6. Limites d'envoi PHP (`upload_max_filesize`, `post_max_size`) à 25 Mo ou plus pour les échantillons.
+
+## Usage responsable
+
+L'ajout d'une voix exige de confirmer qu'il s'agit de sa propre voix ou que la personne enregistrée
+a donné son accord ; la date de cette confirmation est conservée. Ne clonez jamais la voix d'un tiers
+sans son consentement.
