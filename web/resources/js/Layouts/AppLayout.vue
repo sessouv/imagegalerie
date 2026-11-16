@@ -10,7 +10,9 @@ const links = [
     { href: '/', label: 'Synthèse vocale' },
     { href: '/voices', label: 'Voix' },
     { href: '/pronunciations', label: 'Prononciation' },
+    { href: '/transcriptions', label: 'Transcription' },
     { href: '/generations', label: 'Historique' },
+    { href: '/api-keys', label: 'API' },
 ];
 
 const isActive = (href) => (href === '/' ? page.url === '/' : page.url.startsWith(href));

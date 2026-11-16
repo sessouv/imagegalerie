@@ -14,9 +14,11 @@ from . import audio
 from .config import LANGUAGES, Settings
 from .drivers import SpeechParams, make_driver
 from .text import split_text
+from .transcription import JobStore, make_transcriber
 
 settings = Settings()
 driver = make_driver(settings.driver, settings.device, settings.threads)
+transcriptions = JobStore(make_transcriber(settings.driver, settings.whisper_model, settings.device, settings.threads))
 
 
 @asynccontextmanager
@@ -160,6 +162,45 @@ async def encode(
         raise
     media = "audio/mpeg" if format == "mp3" else "audio/wav"
     return FileResponse(dst, media_type=media, background=cleanup)
+
+
+@app.post("/v1/transcriptions", dependencies=[Depends(require_token)], status_code=202)
+async def create_transcription(audio_file: UploadFile = File(...), language: str | None = Form(None)):
+    """Lance une transcription en arrière-plan et renvoie son identifiant."""
+    if language is not None and language not in LANGUAGES:
+        raise HTTPException(422, f"Langue non prise en charge : {language}.")
+
+    tmp = tempfile.mkdtemp()
+    src, wav = os.path.join(tmp, "source"), os.path.join(tmp, "speech.wav")
+    try:
+        size = 0
+        with open(src, "wb") as f:
+            while chunk := await audio_file.read(1024 * 1024):
+                size += len(chunk)
+                if size > settings.max_transcribe_bytes:
+                    raise HTTPException(413, "Fichier trop volumineux.")
+                f.write(chunk)
+        try:
+            await run_in_threadpool(audio.to_speech_wav, src, wav)
+        except audio.AudioError as e:
+            raise HTTPException(422, str(e))
+        os.remove(src)
+        seconds = audio.wav_seconds(wav)
+        if seconds < 0.5:
+            raise HTTPException(422, "Le fichier ne contient pas de son.")
+    except BaseException:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
+
+    return transcriptions.submit(wav, tmp, seconds, language).view()
+
+
+@app.get("/v1/transcriptions/{job_id}", dependencies=[Depends(require_token)])
+def show_transcription(job_id: str):
+    job = transcriptions.get(job_id)
+    if job is None:
+        raise HTTPException(404, "Transcription inconnue : le moteur a peut-être redémarré.")
+    return job.view()
 
 
 def _render(text: str, params: SpeechParams, sample_path: str | None):

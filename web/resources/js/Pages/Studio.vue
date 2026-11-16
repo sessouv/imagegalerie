@@ -11,10 +11,12 @@ const props = defineProps({
     generations: Array,
     engine: Object,
     defaults: Object,
+    projects: Array,
 });
 
 const form = useForm({
     title: '',
+    project_id: null,
     text: '',
     dialogue: false,
     pause_ms: props.defaults.pause_ms,
@@ -82,7 +84,17 @@ const reuse = (generation) => {
 
 useGenerationPolling(() => props.generations);
 
+// Le dernier projet utilisé est proposé d'office pour l'audio suivant
+watch(() => form.project_id, (id) => {
+    try { localStorage.setItem('timbre:project', id ?? ''); } catch { /* stockage indisponible */ }
+});
+
 onMounted(() => {
+    try {
+        const saved = Number(localStorage.getItem('timbre:project'));
+        if (props.projects.some((p) => p.id === saved)) form.project_id = saved;
+    } catch { /* stockage indisponible */ }
+
     const draft = sessionStorage.getItem('timbre:draft');
     if (draft) {
         sessionStorage.removeItem('timbre:draft');
@@ -170,6 +182,14 @@ onMounted(() => {
                 <Link href="/voices" class="mt-1 inline-block text-xs text-accent underline">Cloner une nouvelle voix</Link>
             </div>
 
+            <div v-if="projects.length">
+                <label class="label" for="project">Projet</label>
+                <select id="project" v-model="form.project_id" class="field">
+                    <option :value="null">Aucun</option>
+                    <option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name }}</option>
+                </select>
+            </div>
+
             <div>
                 <label class="label" for="language">Langue du texte</label>
                 <select id="language" v-model="form.language" class="field">
@@ -246,7 +266,7 @@ onMounted(() => {
         </div>
         <p v-if="!generations.length" class="mt-3 text-sm text-black/50">Aucun audio pour le moment.</p>
         <div class="mt-3 space-y-3">
-            <GenerationItem v-for="generation in generations" :key="generation.id" :generation="generation" @reuse="reuse" />
+            <GenerationItem v-for="generation in generations" :key="generation.id" :generation="generation" :projects="projects" @reuse="reuse" />
         </div>
     </section>
 </template>

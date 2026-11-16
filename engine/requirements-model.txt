@@ -1,2 +1,4 @@
 # Modèle vocal réel (lourd : PyTorch). Inutile avec ENGINE_DRIVER=fake.
 chatterbox-tts==0.1.7
+# Transcription audio vers texte (Whisper)
+faster-whisper==1.2.1

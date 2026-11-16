@@ -14,6 +14,11 @@ Outil interne de synthèse vocale et de clonage de voix (français et anglais), 
   (`[Camille] Bonjour !`), le tout sort en un seul fichier.
 - **Sortie audio** : téléchargement en MP3 ou WAV, volume homogène d'un fichier à l'autre, durée des pauses
   réglable, nom de fichier personnalisé.
+- **Transcription** : un fichier audio ou vidéo devient un texte et des sous-titres (.srt), grâce au modèle
+  open source Whisper.
+- **Projets et recherche** : les audios se rangent par projet et se retrouvent par nom, texte ou voix.
+- **API** : vos autres sites demandent un audio ou une transcription avec une clé d'accès (écran « API »,
+  qui contient le mode d'emploi et des exemples).
 - **Historique** partagé par l'équipe.
 
 ## Architecture
@@ -21,7 +26,7 @@ Outil interne de synthèse vocale et de clonage de voix (français et anglais), 
 | Dossier | Rôle | Technologies |
 | --- | --- | --- |
 | `web/` | Interface, comptes, bibliothèque de voix, file d'attente | Laravel 13, Inertia, Vue 3, Tailwind |
-| `engine/` | Moteur vocal : reçoit un texte (et un échantillon de voix), renvoie l'audio | Python, FastAPI, [Chatterbox Multilingual](https://github.com/resemble-ai/chatterbox) (licence MIT) |
+| `engine/` | Moteur vocal : synthèse, clonage, nettoyage audio, transcription | Python, FastAPI, [Chatterbox Multilingual](https://github.com/resemble-ai/chatterbox) et [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (licences MIT) |
 
 L'application Laravel place chaque demande dans une file d'attente ; un worker appelle le moteur
 (`POST /v1/speech`, protégé par un jeton partagé) et enregistre le MP3. Le moteur ne conserve aucune
@@ -63,7 +68,10 @@ il reprend les générations interrompues, ouvre trois fenêtres (moteur, site, 
 navigateur. Fermer ces fenêtres arrête tout.
 
 Après une mise à jour du code : `composer install`, `php artisan migrate`, `npm install && npm run build`
-dans `web/`, puis relancer `demarrer.bat`.
+dans `web/`, `.venv\Scripts\pip install -r requirements-model.txt` dans `engine/`, puis relancer `demarrer.bat`.
+
+Le modèle de transcription (`ENGINE_WHISPER_MODEL`, `small` par défaut) est téléchargé à la première
+transcription. Pour transcrire de gros fichiers, relever `upload_max_filesize` et `post_max_size` dans PHP.
 
 Si le worker a été arrêté en pleine génération, `php artisan generations:resume` (à lancer worker arrêté)
 la remet en file ; sinon elle reprend seule au bout d'une dizaine de minutes.

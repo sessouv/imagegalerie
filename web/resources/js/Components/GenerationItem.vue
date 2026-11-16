@@ -4,7 +4,10 @@ import { computed, ref } from 'vue';
 import { duration, dateTime } from '../format';
 import SegmentList from './SegmentList.vue';
 
-const props = defineProps({ generation: { type: Object, required: true } });
+const props = defineProps({
+    generation: { type: Object, required: true },
+    projects: { type: Array, default: () => [] },
+});
 defineEmits(['reuse']);
 
 const showSegments = ref(false);
@@ -20,6 +23,13 @@ const remove = () => {
         router.delete(`/generations/${props.generation.id}`, { preserveScroll: true });
     }
 };
+
+const projectName = computed(() => props.projects.find((p) => p.id === props.generation.project_id)?.name);
+const move = (event) => router.patch(
+    `/generations/${props.generation.id}`,
+    { project_id: event.target.value === '' ? null : Number(event.target.value) },
+    { preserveScroll: true },
+);
 
 const rename = () => {
     const title = prompt('Nom de l\'audio (il sert aussi de nom au fichier téléchargé) :', props.generation.title ?? '');
@@ -40,6 +50,7 @@ const retry = () => router.post(`/generations/${props.generation.id}/retry`, {},
             <span v-if="generation.duration_ms && generation.status === 'completed'">{{ duration(generation.duration_ms) }}</span>
             <span>{{ dateTime(generation.created_at) }}</span>
             <span v-if="generation.author">par {{ generation.author }}</span>
+            <span v-if="projectName" class="rounded-full bg-black/5 px-2 py-0.5 text-black/70">{{ projectName }}</span>
         </div>
 
         <p class="mt-2 line-clamp-3 text-sm whitespace-pre-line">{{ generation.text }}</p>
@@ -79,6 +90,13 @@ const retry = () => router.post(`/generations/${props.generation.id}/retry`, {},
             </button>
             <button class="text-black/60 underline hover:text-black" @click="$emit('reuse', generation)">Réutiliser le texte</button>
             <button class="text-black/60 underline hover:text-black" @click="rename">{{ generation.title ? 'Renommer' : 'Nommer' }}</button>
+            <label v-if="projects.length" class="flex items-center gap-1 text-black/60">
+                Projet
+                <select class="rounded border border-black/15 bg-white px-1 py-0.5" :value="generation.project_id ?? ''" @change="move">
+                    <option value="">Aucun</option>
+                    <option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name }}</option>
+                </select>
+            </label>
             <button class="text-red-600/80 underline hover:text-red-700" @click="remove">{{ running ? 'Arrêter et supprimer' : 'Supprimer' }}</button>
         </div>
 

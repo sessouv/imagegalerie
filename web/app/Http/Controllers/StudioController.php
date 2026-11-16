@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Generation;
+use App\Models\Project;
 use App\Models\Voice;
 use App\Services\VoiceEngine;
 use Inertia\Inertia;
@@ -15,6 +16,7 @@ class StudioController extends Controller
         return Inertia::render('Studio', [
             'voices' => fn () => Voice::orderBy('name')->get(['id', 'name', 'language', 'settings']),
             'languages' => config('voice.languages'),
+            'projects' => fn () => Project::orderBy('name')->get(['id', 'name']),
             'maxChars' => config('voice.max_chars'),
             'defaults' => [
                 'pause_ms' => config('voice.pause_ms'),

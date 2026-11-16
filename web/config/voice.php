@@ -10,6 +10,8 @@ return [
     'timeout' => (int) env('VOICE_ENGINE_TIMEOUT', 600),
 
     'max_chars' => (int) env('VOICE_MAX_CHARS', 100000),
+    // Taille maximale d'un fichier à transcrire (limitée aussi par upload_max_filesize de PHP)
+    'max_transcribe_kb' => (int) env('VOICE_MAX_TRANSCRIBE_KB', 512000),
     'max_sample_kb' => (int) env('VOICE_MAX_SAMPLE_KB', 20480),
 
     // Longueur maximale d'un passage : au-delà, le modèle perd en stabilité

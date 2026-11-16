@@ -52,6 +52,17 @@ def clean_sample(src: str, dst: str, sample_rate: int, max_seconds: int) -> None
         raise AudioError("Échantillon audio illisible.")
 
 
+def to_speech_wav(src: str, dst: str) -> None:
+    """Extrait la piste audio d'un fichier (audio ou vidéo) en WAV mono 16 kHz, le format de la transcription."""
+    result = subprocess.run(
+        ["ffmpeg", "-nostdin", "-y", "-loglevel", "error", "-i", src, "-vn", "-ac", "1", "-ar", "16000",
+         "-c:a", "pcm_s16le", dst],
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        raise AudioError("Fichier illisible : ce n'est ni un audio ni une vidéo reconnue.")
+
+
 def wav_seconds(path: str) -> float:
     with wave.open(path, "rb") as f:
         return f.getnframes() / float(f.getframerate())

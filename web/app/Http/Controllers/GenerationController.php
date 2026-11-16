@@ -4,117 +4,70 @@ namespace App\Http\Controllers;
 
 use App\Models\Generation;
 use App\Models\GenerationSegment;
-use App\Models\Voice;
-use App\Services\DialogueParser;
-use App\Services\TextSplitter;
+use App\Models\Project;
+use App\Services\GenerationCreator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str;
-use Illuminate\Validation\Rule;
-use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
-use InvalidArgumentException;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class GenerationController extends Controller
 {
-    public function index(): Response
+    public function index(Request $request): Response
     {
+        $filters = $request->validate([
+            'q' => ['nullable', 'string', 'max:100'],
+            'project' => ['nullable', 'string', 'max:20'],
+        ]);
+        $search = trim((string) ($filters['q'] ?? ''));
+        $project = $filters['project'] ?? null;
+
+        $generations = Generation::withProgress()
+            ->when($search !== '', function ($query) use ($search) {
+                // « ! » sert de caractère d'échappement : % et _ sont cherchés tels quels
+                $like = '%'.str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $search).'%';
+                $query->where(fn ($q) => $q->whereRaw("title like ? escape '!'", [$like])
+                    ->orWhereRaw("text like ? escape '!'", [$like])
+                    ->orWhereRaw("voice_name like ? escape '!'", [$like]));
+            })
+            ->when($project === 'none', fn ($q) => $q->whereNull('project_id'))
+            ->when(ctype_digit((string) $project), fn ($q) => $q->where('project_id', (int) $project))
+            ->latest('id')
+            ->paginate(20)
+            ->withQueryString()
+            ->through(fn (Generation $g) => $g->present());
+
         return Inertia::render('History', [
-            'generations' => Generation::withProgress()->latest('id')->paginate(20)
-                ->through(fn (Generation $g) => $g->present()),
+            'generations' => $generations,
+            'projects' => fn () => Project::withCount('generations')->orderBy('name')->get(['id', 'name']),
+            'unfiled' => fn () => Generation::whereNull('project_id')->count(),
+            'filters' => ['q' => $search, 'project' => $project],
         ]);
     }
 
-    public function store(Request $request, TextSplitter $splitter, DialogueParser $dialogue): RedirectResponse
+    public function store(Request $request, GenerationCreator $creator): RedirectResponse
     {
-        $data = $request->validate([
-            'title' => ['nullable', 'string', 'max:120'],
-            'text' => ['required', 'string', 'max:'.config('voice.max_chars')],
-            'language' => ['required', Rule::in(array_keys(config('voice.languages')))],
-            'voice_id' => ['nullable', 'integer', 'exists:voices,id'],
-            'dialogue' => ['boolean'],
-            'exaggeration' => ['required', 'numeric', 'between:0.25,2'],
-            'cfg_weight' => ['required', 'numeric', 'between:0,1'],
-            'temperature' => ['required', 'numeric', 'between:0.05,2'],
-            'seed' => ['nullable', 'integer', 'between:0,2147483647'],
-            'pause_ms' => ['integer', 'between:0,3000'],
-            'paragraph_pause_ms' => ['integer', 'between:0,5000'],
-            'normalize' => ['boolean'],
-        ], [
-            'text.required' => 'Saisissez le texte à lire.',
-            'text.max' => 'Le texte dépasse :max caractères.',
-        ]);
-
-        $voice = isset($data['voice_id']) ? Voice::find($data['voice_id']) : null;
-        $isDialogue = (bool) ($data['dialogue'] ?? false);
-
-        // Un texte simple est un dialogue à une seule voix
-        try {
-            $lines = $isDialogue
-                ? $dialogue->parse($data['text'], Voice::all(), $voice)
-                : [['voice' => $voice, 'text' => $data['text']]];
-        } catch (InvalidArgumentException $e) {
-            throw ValidationException::withMessages(['text' => $e->getMessage()]);
-        }
-
-        $segments = [];
-        foreach ($lines as $line) {
-            foreach ($splitter->split($line['text'], config('voice.segment_chars')) as $segment) {
-                $segments[] = $segment + [
-                    'position' => count($segments),
-                    'voice_id' => $line['voice']?->id,
-                    'voice_name' => $line['voice']?->name,
-                ];
-            }
-        }
-        if (! $segments) {
-            throw ValidationException::withMessages(['text' => 'Saisissez le texte à lire.']);
-        }
-
-        $speakers = collect($segments)->map(fn (array $s) => $s['voice_name'] ?? 'Voix par défaut')->unique()->values();
-
-        $generation = DB::transaction(function () use ($request, $data, $voice, $segments, $isDialogue, $speakers) {
-            $generation = Generation::create([
-                'user_id' => $request->user()->id,
-                'voice_id' => $voice?->id,
-                'voice_name' => $speakers->count() > 1 ? Str::limit('Dialogue : '.$speakers->implode(', '), 250) : $segments[0]['voice_name'],
-                'title' => filled($data['title'] ?? null) ? trim($data['title']) : null,
-                'text' => trim($data['text']),
-                'language' => $data['language'],
-                'settings' => [
-                    'exaggeration' => (float) $data['exaggeration'],
-                    'cfg_weight' => (float) $data['cfg_weight'],
-                    'temperature' => (float) $data['temperature'],
-                    'seed' => $data['seed'] ?? null,
-                    'pause_ms' => (int) ($data['pause_ms'] ?? config('voice.pause_ms')),
-                    'paragraph_pause_ms' => (int) ($data['paragraph_pause_ms'] ?? config('voice.paragraph_pause_ms')),
-                    'normalize' => (bool) ($data['normalize'] ?? true),
-                    'dialogue' => $isDialogue,
-                ],
-                'status' => Generation::PENDING,
-            ]);
-
-            $generation->segments()->createMany($segments);
-
-            return $generation;
-        });
-
-        $generation->enqueue();
+        $creator->create($request->user(), $request->validate($creator->rules(), $creator->messages()));
 
         return back();
     }
 
-    /** Renomme l'audio. */
+    /** Renomme l'audio ou le range dans un projet. */
     public function update(Request $request, Generation $generation): RedirectResponse
     {
-        $data = $request->validate(['title' => ['nullable', 'string', 'max:120']]);
+        $data = $request->validate([
+            'title' => ['sometimes', 'nullable', 'string', 'max:120'],
+            'project_id' => ['sometimes', 'nullable', 'integer', 'exists:projects,id'],
+        ]);
 
-        $generation->update(['title' => filled($data['title'] ?? null) ? trim($data['title']) : null]);
+        if (array_key_exists('title', $data)) {
+            $data['title'] = filled($data['title']) ? trim($data['title']) : null;
+        }
+        $generation->update($data);
 
         return back();
     }

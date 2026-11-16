@@ -12,7 +12,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
-#[Fillable(['user_id', 'voice_id', 'voice_name', 'title', 'wav_path', 'text', 'language', 'settings', 'status', 'audio_path', 'duration_ms', 'error'])]
+#[Fillable(['user_id', 'voice_id', 'project_id', 'voice_name', 'title', 'wav_path', 'text', 'language', 'settings', 'status', 'audio_path', 'duration_ms', 'error'])]
 class Generation extends Model
 {
     use HasFactory;
@@ -116,6 +116,7 @@ class Generation extends Model
         return [
             'id' => $this->id,
             'title' => $this->title,
+            'project_id' => $this->project_id,
             'dialogue' => $this->isDialogue(),
             'text' => $this->text,
             'language' => $this->language,

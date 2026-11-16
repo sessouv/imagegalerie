@@ -186,3 +186,34 @@ def test_encode_handles_silence_and_unknown_format():
             "/v1/encode", files={"audio_file": ("a.wav", _wav(2), "audio/wav")}, data={"format": "ogg"}, headers=AUTH
         )
         assert r.status_code == 422
+
+
+def test_transcription_runs_in_background_and_reports_result():
+    import time
+
+    with TestClient(app) as client:
+        files = {"audio_file": ("a.wav", _wav(12), "audio/wav")}
+        assert client.post("/v1/transcriptions", files=files).status_code == 401
+        r = client.post("/v1/transcriptions", files=files, data={"language": "fr"}, headers=AUTH)
+        assert r.status_code == 202 and r.json()["status"] in ("pending", "processing", "completed")
+        job_id = r.json()["id"]
+
+        for _ in range(50):
+            body = client.get(f"/v1/transcriptions/{job_id}", headers=AUTH).json()
+            if body["status"] == "completed":
+                break
+            time.sleep(0.05)
+        assert body["status"] == "completed" and body["progress"] == 100
+        assert body["language"] == "fr" and abs(body["duration_ms"] - 12000) < 50
+        assert [s["start"] for s in body["segments"]] == [0.0, 5.0, 10.0]
+        assert body["text"].startswith("Phrase de test numéro 1. Phrase de test numéro 2.")
+
+
+def test_transcription_rejects_bad_input():
+    with TestClient(app) as client:
+        post = lambda body, **data: client.post(  # noqa: E731
+            "/v1/transcriptions", files={"audio_file": ("a.bin", body, "application/octet-stream")}, data=data, headers=AUTH
+        ).status_code
+        assert post(b"pas de l'audio") == 422
+        assert post(_wav(5), language="xx") == 422
+        assert client.get("/v1/transcriptions/inconnu", headers=AUTH).status_code == 404
